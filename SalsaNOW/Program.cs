@@ -49,278 +49,318 @@ namespace SalsaNOW
 
         static async Task Main(string[] args)
         {
+            // Making sure no SSL/TLS issues occur
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
+            ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, errors) => true;
+
             await Startup();
             await AppsInstall();
             await DesktopInstall();
-            await SteamUSG();
+            await SteamServerShutdown();
         }
 
         static async Task Startup()
         {
-            string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/directory.json";
-
-            using (WebClient webClient = new WebClient())
+            try
             {
-                string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                List<SavePath> directory = JsonConvert.DeserializeObject<List<SavePath>>(json);
-                var dir = directory[0];
+                string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/directory.json";
 
-                globalDirectory = dir.directoryCreate;
-                Directory.CreateDirectory(dir.directoryCreate);
-                Console.WriteLine($"[!] Main directory created {dir.directoryCreate}");
+                if(!Directory.Exists("C:\\Asgard"))
+                {
+                    Console.WriteLine("[!] SalsaNOW detected the host as not being a GeForce Now enviorment. Exiting...");
+                    Thread.Sleep(5000);
+                    Environment.Exit(0);
+                }
+
+                using (WebClient webClient = new WebClient())
+                {
+                    string json = await webClient.DownloadStringTaskAsync(jsonUrl);
+                    List<SavePath> directory = JsonConvert.DeserializeObject<List<SavePath>>(json);
+                    var dir = directory[0];
+
+                    globalDirectory = dir.directoryCreate;
+                    Directory.CreateDirectory(dir.directoryCreate);
+                    Console.WriteLine($"[!] Main directory created {dir.directoryCreate}");
+                }
+            }
+            catch(Exception ex)
+            {
+                Console.WriteLine("[!] Error during the Startup process: " + ex.Message);
+                Console.ReadKey();
             }
         }
         static async Task AppsInstall()
         {
-            string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/apps.json";
-
-            using (WebClient webClient = new WebClient())
+            try
             {
-                string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                List<Apps> apps = JsonConvert.DeserializeObject<List<Apps>>(json);
+                string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/apps.json";
 
-                foreach (var app in apps)
+                using (WebClient webClient = new WebClient())
                 {
-                    string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + $"\\{app.name}.lnk";
-                    string zipFile = Path.Combine(globalDirectory, app.name);
-                    string appExePath = Path.Combine(globalDirectory, app.exeName);
-                    string appZipPath = Path.Combine(globalDirectory, app.name, app.exeName);
+                    string json = await webClient.DownloadStringTaskAsync(jsonUrl);
+                    List<Apps> apps = JsonConvert.DeserializeObject<List<Apps>>(json);
 
-                    if (!Directory.Exists(zipFile))
+                    foreach (var app in apps)
                     {
-                        if (app.fileExtension == "zip")
+                        string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + $"\\{app.name}.lnk";
+                        string zipFile = Path.Combine(globalDirectory, app.name);
+                        string appExePath = Path.Combine(globalDirectory, app.exeName);
+                        string appZipPath = Path.Combine(globalDirectory, app.name, app.exeName);
+
+                        if (!Directory.Exists(zipFile))
                         {
-                            Console.WriteLine("[+] Installing " + app.name);
-
-                            await webClient.DownloadFileTaskAsync(new Uri(app.url), $"{zipFile}.zip");
-
-                            ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
-
-                            WshShell shell = new WshShell();
-                            IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                            shortcut.TargetPath = appZipPath;
-                            shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(appZipPath);
-
-                            shortcut.Save();
-
-                            System.IO.File.Delete($"{zipFile}.zip");
-
-                            if (app.run == "true")
+                            if (app.fileExtension == "zip")
                             {
-                                Process.Start(appZipPath);
+                                Console.WriteLine("[+] Installing " + app.name);
+
+                                await webClient.DownloadFileTaskAsync(new Uri(app.url), $"{zipFile}.zip");
+
+                                ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
+
+                                WshShell shell = new WshShell();
+                                IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
+                                shortcut.TargetPath = appZipPath;
+                                shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(appZipPath);
+
+                                shortcut.Save();
+
+                                System.IO.File.Delete($"{zipFile}.zip");
+
+                                if (app.run == "true")
+                                {
+                                    Process.Start(appZipPath);
+                                }
+                            }
+
+                            if (app.fileExtension == "exe")
+                            {
+                                Console.WriteLine("[+] Installing " + app.name);
+
+                                await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
+
+                                WshShell shell = new WshShell();
+                                IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
+                                shortcut.TargetPath = appExePath;
+                                shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
+
+                                shortcut.Save();
+
+                                if (app.run == "true")
+                                {
+                                    Process.Start(appExePath);
+                                }
                             }
                         }
-
-                        if (app.fileExtension == "exe")
+                        else
                         {
-                            Console.WriteLine("[+] Installing " + app.name);
+                            Console.WriteLine("[!] " + app.name + " Already exists.");
 
-                            await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
-
-                            WshShell shell = new WshShell();
-                            IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                            shortcut.TargetPath = appExePath;
-                            shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
-
-                            shortcut.Save();
-
-                            if (app.run == "true")
+                            if (app.fileExtension == "zip")
                             {
-                                Process.Start(appExePath);
+                                WshShell shell = new WshShell();
+                                IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
+                                shortcut.TargetPath = appZipPath;
+                                shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
+
+                                shortcut.Save();
+
+                                if (app.run == "true")
+                                {
+                                    Process.Start(appZipPath);
+                                }
                             }
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("[!] " + app.name + " Already exists.");
 
-                        if (app.fileExtension == "zip")
-                        {
-                            WshShell shell = new WshShell();
-                            IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                            shortcut.TargetPath = appZipPath;
-                            shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
-
-                            shortcut.Save();
-
-                            if (app.run == "true")
+                            if (app.fileExtension == "exe")
                             {
-                                Process.Start(appZipPath);
-                            }
-                        }
+                                WshShell shell = new WshShell();
+                                IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
+                                shortcut.TargetPath = appExePath;
+                                shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
 
-                        if (app.fileExtension == "exe")
-                        {
-                            WshShell shell = new WshShell();
-                            IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                            shortcut.TargetPath = appExePath;
-                            shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
+                                shortcut.Save();
 
-                            shortcut.Save();
-
-                            if (app.run == "true")
-                            {
-                                Process.Start(appExePath);
+                                if (app.run == "true")
+                                {
+                                    Process.Start(appExePath);
+                                }
                             }
                         }
                     }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[!] Error during AppsInstall: " + ex.Message);
+                Console.ReadKey();
             }
         }
         static async Task DesktopInstall()
         {
-            string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/desktop.json";
-            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
-
-            Directory.CreateDirectory(shortcutsDir);
-
-            using (WebClient webClient = new WebClient())
-            {
-                string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                List<DesktopInfo> desktopInfo = JsonConvert.DeserializeObject<List<DesktopInfo>>(json);
-
-                IntPtr hWndSeelen = FindWindow(null, "CustomExplorer");
-
-                // Check if the window handle is valid
-                if (hWndSeelen != IntPtr.Zero)
-                {
-                    PostMessage(hWndSeelen, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                }
-
-                foreach (var desktops in desktopInfo)
-                {
-                    string appDir = Path.Combine(globalDirectory, desktops.name);
-                    string zipFile = Path.Combine(globalDirectory, desktops.name + ".zip");
-                    string exePath = Path.Combine(appDir, desktops.exeName);
-                    string taskbarFixerPath = string.IsNullOrEmpty(desktops.taskbarFixer) ? "" : Path.Combine(appDir, desktops.taskbarFixer);
-                    string roamingPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-
-                    if (!Directory.Exists(appDir))
-                    {
-                        await webClient.DownloadFileTaskAsync(new Uri(desktops.url), zipFile);
-
-                        ZipFile.ExtractToDirectory(zipFile, appDir);
-
-                        if (desktops.name == "WinXShell_x64")
-                        {
-                            Process.Start(exePath);
-                            Process.Start(taskbarFixerPath);
-                        }
-
-                        if (desktops.name == "seelenui")
-                        {
-                            WebClient webClientConfig = new WebClient();
-                            await webClientConfig.DownloadFileTaskAsync(new Uri(desktops.zipConfig), zipFile);
-
-                            try
-                            {
-                                ZipFile.ExtractToDirectory(zipFile, $"{roamingPath}\\com.seelen.seelen-ui");
-                            }
-                            catch
-                            {
-                            }
-
-                            Process.Start(exePath);
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("[!] " + desktops.name + " Already exists.");
-
-                        if (desktops.name == "WinXShell_x64")
-                        {
-                            Process.Start(exePath);
-                            Process.Start(taskbarFixerPath);
-                        }
-
-                        if (desktops.name == "seelenui")
-                        {
-                            Process.Start(exePath);
-                        }
-                    }
-                }
-            }
-
-            Thread.Sleep(3000);
-
-            while (true)
-            {
-                bool foundAndClosed = false;
-
-                EnumWindows((hWnd, lParam) =>
-                {
-                    EnumChildWindows(hWnd, (child, lp) =>
-                    {
-                        var sb = new StringBuilder(512);
-                        GetWindowText(child, sb, sb.Capacity);
-                        if (sb.ToString().Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
-                        {
-                            SendMessage(child, WM_CLOSE, IntPtr.Zero, IntPtr.Zero); 
-                            foundAndClosed = true;
-                            Console.WriteLine("seelen wall closed.");
-                            return false; // stop enumerating children
-                        }
-                        return true;
-                    }, IntPtr.Zero);
-
-                    return !foundAndClosed; // stop enumerating top-levels if found
-                }, IntPtr.Zero);
-
-                if (foundAndClosed)
-                    break; // exit the loop
-
-                Thread.Sleep(500); // wait before retrying
-            }
-        }
-
-        static async Task SteamUSG()
-        {
-            string dummyJsonLink = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/kaka.json";
-            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            using (WebClient webClient = new WebClient())
-            {
-                try
-                {
-                    Console.WriteLine("[+] Shutting Down Steam Server");
-                    string response = webClient.UploadString("http://127.10.0.231:9753/shutdown", "POST");
-                    Console.WriteLine(response);
-                }
-                catch
-                {
-                    Console.WriteLine("[!] Steam Server is not running.");
-                }
-
-                await webClient.DownloadFileTaskAsync(new Uri(dummyJsonLink), $"{globalDirectory}\\kaka.json");
-            }
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = @"C:\Program Files (x86)\Steam\lockdown\server\server.exe",
-                Arguments = $"{globalDirectory}\\kaka.json",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-
-            Process.Start(startInfo);
-
             try
             {
-                Directory.Delete($"{localAppData}\\NVIDIA", true);
-                Directory.Delete($"{localAppData}\\NVIDIA Corporation", true);
-            }
-            catch
-            {
-            }
+                string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/desktop.json";
+                string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
 
-            foreach (var process in Process.GetProcessesByName("steam"))
-            {
-                process.Kill();
-            }
+                Directory.CreateDirectory(shortcutsDir);
 
-            Process.Start("steam://open/library");
+                using (WebClient webClient = new WebClient())
+                {
+                    string json = await webClient.DownloadStringTaskAsync(jsonUrl);
+                    List<DesktopInfo> desktopInfo = JsonConvert.DeserializeObject<List<DesktopInfo>>(json);
+
+                    IntPtr hWndSeelen = FindWindow(null, "CustomExplorer");
+
+                    // Check if the window handle is valid
+                    if (hWndSeelen != IntPtr.Zero)
+                    {
+                        PostMessage(hWndSeelen, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    }
+
+                    foreach (var desktops in desktopInfo)
+                    {
+                        string appDir = Path.Combine(globalDirectory, desktops.name);
+                        string zipFile = Path.Combine(globalDirectory, desktops.name + ".zip");
+                        string exePath = Path.Combine(appDir, desktops.exeName);
+                        string taskbarFixerPath = string.IsNullOrEmpty(desktops.taskbarFixer) ? "" : Path.Combine(appDir, desktops.taskbarFixer);
+                        string roamingPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+                        if (!Directory.Exists(appDir))
+                        {
+                            await webClient.DownloadFileTaskAsync(new Uri(desktops.url), zipFile);
+
+                            ZipFile.ExtractToDirectory(zipFile, appDir);
+
+                            if (desktops.name == "WinXShell_x64")
+                            {
+                                Process.Start(exePath);
+                                Process.Start(taskbarFixerPath);
+                            }
+
+                            if (desktops.name == "seelenui")
+                            {
+                                WebClient webClientConfig = new WebClient();
+                                await webClientConfig.DownloadFileTaskAsync(new Uri(desktops.zipConfig), zipFile);
+
+                                try
+                                {
+                                    ZipFile.ExtractToDirectory(zipFile, $"{roamingPath}\\com.seelen.seelen-ui");
+                                }
+                                catch
+                                {
+                                }
+
+                                Process.Start(exePath);
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine("[!] " + desktops.name + " Already exists.");
+
+                            if (desktops.name == "WinXShell_x64")
+                            {
+                                Process.Start(exePath);
+                                Process.Start(taskbarFixerPath);
+                            }
+
+                            if (desktops.name == "seelenui")
+                            {
+                                Process.Start(exePath);
+                            }
+                        }
+                    }
+                }
+
+                Thread.Sleep(3000);
+
+                while (true)
+                {
+                    bool foundAndClosed = false;
+
+                    EnumWindows((hWnd, lParam) =>
+                    {
+                        EnumChildWindows(hWnd, (child, lp) =>
+                        {
+                            var sb = new StringBuilder(512);
+                            GetWindowText(child, sb, sb.Capacity);
+                            if (sb.ToString().Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
+                            {
+                                SendMessage(child, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                                foundAndClosed = true;
+                                Console.WriteLine("Seelen UI startup window has been closed.");
+                                return false; // stop enumerating children
+                            }
+                            return true;
+                        }, IntPtr.Zero);
+
+                        return !foundAndClosed; // stop enumerating top-levels if found
+                    }, IntPtr.Zero);
+
+                    if (foundAndClosed)
+                        break; // exit the loop
+
+                    Thread.Sleep(500); // wait before retrying
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[!] Error during DesktopInstall: " + ex.Message);
+                Console.ReadKey();
+            }
+        }
+        static async Task SteamServerShutdown()
+        {
+            /* Steam Server (NVIDIA Made Proxy Interceptor for Steam) "127.10.0.231:9753"
+             * Steam Server communicates with Steam by proxy and intercepts function calls from Steam by
+             * making them not happen or replaces them with special made ones to do something else.
+             * Shutting the server down by POST request will lead to all opted-in games on
+             * GeForce Now to show up on Steam.
+             */
+
+            try 
+            {
+                string dummyJsonLink = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/kaka.json";
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+                using (WebClient webClient = new WebClient())
+                {
+                    try
+                    {
+                        Console.WriteLine("[+] Shutting Down Steam Server");
+                        string response = webClient.UploadString("http://127.10.0.231:9753/shutdown", "POST");
+                        Console.WriteLine(response);
+                    }
+                    catch
+                    {
+                        Console.WriteLine("[!] Steam Server is not running.");
+                    }
+
+                    await webClient.DownloadFileTaskAsync(new Uri(dummyJsonLink), $"{globalDirectory}\\kaka.json");
+                }
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = @"C:\Program Files (x86)\Steam\lockdown\server\server.exe",
+                    Arguments = $"{globalDirectory}\\kaka.json",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+
+                Process.Start(startInfo);
+
+                foreach (var process in Process.GetProcessesByName("steam"))
+                {
+                    process.Kill();
+                }
+
+                Process.Start("steam://open/library");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[!] Error during SteamServerShutdown: " + ex.Message);
+                Console.ReadKey();
+            }
         }
 
         public class SavePath
