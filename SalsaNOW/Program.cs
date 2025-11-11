@@ -299,7 +299,7 @@ namespace SalsaNOW
                     if (foundAndClosed)
                         break; // exit the loop
 
-                    Thread.Sleep(500); // wait before retrying
+                    Thread.Sleep(500); // wait before retrying 
                 }
             }
             catch (Exception ex)
