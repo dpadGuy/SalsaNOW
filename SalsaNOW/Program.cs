@@ -67,7 +67,7 @@ namespace SalsaNOW
 
                 if(!Directory.Exists("C:\\Asgard"))
                 {
-                    Console.WriteLine("[!] SalsaNOW detected the host as not being a GeForce Now enviorment. Exiting...");
+                    Console.WriteLine("[!] SalsaNOW detected the host as not being a GeForce NOW environment. Exiting...");
                     Thread.Sleep(5000);
                     Environment.Exit(0);
                 }
@@ -314,7 +314,7 @@ namespace SalsaNOW
              * Steam Server communicates with Steam by proxy and intercepts function calls from Steam by
              * making them not happen or replaces them with special made ones to do something else.
              * Shutting the server down by POST request will lead to all opted-in games on
-             * GeForce Now to show up on Steam.
+             * GeForce NOW to show up on Steam.
              */
 
             try 
