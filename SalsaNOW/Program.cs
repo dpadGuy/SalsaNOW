@@ -264,7 +264,7 @@ namespace SalsaNOW
         }
         static async Task DesktopInstall()
         {
-            string jsonUrl = "https://raw.githubusercontent.com/dpadGuy/SalsaNOWThings/refs/heads/main/desktop_soon.json";
+            string jsonUrl = "https://raw.githubusercontent.com/dpadGuy/SalsaNOWThings/refs/heads/main/desktop.json";
             string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
 
             try
