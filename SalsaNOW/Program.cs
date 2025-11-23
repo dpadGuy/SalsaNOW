@@ -719,8 +719,6 @@ namespace SalsaNOW
         public class DesktopInfo
         {
             public string name { get; set; }
-            
-            public string nameCompare { get; set; }
             public string exeName { get; set; }
             public string taskbarFixer { get; set; }
             public string zipConfig { get; set; }
