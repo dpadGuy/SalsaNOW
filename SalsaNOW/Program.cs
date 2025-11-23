@@ -77,6 +77,7 @@ namespace SalsaNOW
             var handle = GetConsoleWindow();
             ShowWindow(handle, SW_HIDE);
 
+            StartupBatchConfig();
             ShortcutsSaving();
         }
 
@@ -301,7 +302,7 @@ namespace SalsaNOW
                             ZipFile.ExtractToDirectory(zipFile, appDir);
                             System.IO.File.Delete(zipFile);
 
-                            if (desktops.name == "WinXShell_Steam")
+                            if (desktops.name.Contains("WinXShell"))
                             {
                                 Process.Start(exePath);
 
@@ -329,7 +330,7 @@ namespace SalsaNOW
                                 }
                             }
 
-                            if (desktops.name == "seelenui")
+                            if (desktops.name.Contains("seelenui"))
                             {
                                 foreach (var line in salsaNowIniOpen)
                                 {
@@ -356,7 +357,7 @@ namespace SalsaNOW
                         {
                             Console.WriteLine("[!] " + desktops.name + " Already exists.");
 
-                            if (desktops.name == "WinXShell_Steam")
+                            if (desktops.name.Contains("WinXShell"))
                             {
                                 Process.Start(exePath);
 
@@ -380,7 +381,7 @@ namespace SalsaNOW
                                 }
                             }
 
-                            if (desktops.name == "seelenui")
+                            if (desktops.name.Contains("seelenui"))
                             {
                                 foreach (var ln in salsaNowIniOpen)
                                 {
@@ -685,6 +686,23 @@ namespace SalsaNOW
             }
         }
 
+        static void StartupBatchConfig()
+        {
+            // Run startup batch file if it exists
+            if (System.IO.File.Exists($"{globalDirectory}\\StartupBatch.bat"))
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = $"{globalDirectory}\\StartupBatch.bat",
+                    UseShellExecute = true,
+                };
+
+                Process.Start(startInfo);
+            }
+
+            return;
+        }
+
         public class SavePath
         {
             public string configName { get; set; }
@@ -701,6 +719,8 @@ namespace SalsaNOW
         public class DesktopInfo
         {
             public string name { get; set; }
+            
+            public string nameCompare { get; set; }
             public string exeName { get; set; }
             public string taskbarFixer { get; set; }
             public string zipConfig { get; set; }
