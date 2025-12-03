@@ -1,17 +1,18 @@
 ﻿using IWshRuntimeLibrary;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Linq;
 
 namespace SalsaNOW
 {
@@ -121,7 +122,6 @@ namespace SalsaNOW
         {
             string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/apps.json";
             string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
-            int lineNumber = 5; // 1-based index
 
             try
             {
@@ -248,10 +248,23 @@ namespace SalsaNOW
 
                 // Shortcurts have been made, it's up to the user if they want them created again or not
                 // We change value to 1 for skipping shortcuts creation from now on
-                if (salsaNowIniOpen.Length >= lineNumber)
+                for (int i = 0; i < salsaNowIniOpen.Length; i++)
                 {
-                    salsaNowIniOpen[lineNumber - 1] = "SkipShortcutsCreation = \"1\"";
-                    System.IO.File.WriteAllLines(salsaNowIniPath, salsaNowIniOpen);   // save
+                    string line = salsaNowIniOpen[i].TrimStart();
+
+                    if (line.StartsWith("SkipShortcutsCreation"))
+                    {
+                        if (line.Contains("= \"1\""))
+                        {
+                            return;
+                        }
+
+                        // Not 1 yet, so update it
+                        salsaNowIniOpen[i] = "SkipShortcutsCreation = \"1\"";
+
+                        System.IO.File.WriteAllLines(salsaNowIniPath, salsaNowIniOpen);
+                        break;
+                    }
                 }
 
                 return;
@@ -359,6 +372,15 @@ namespace SalsaNOW
 
                             if (desktops.name.Contains("WinXShell"))
                             {
+                                // Bing Photo Of The Day Wallpaper Feature
+                                foreach (var line in salsaNowIniOpen)
+                                {
+                                    if (line.Contains("BingPhotoOfTheDayWallpaper = \"1\""))
+                                    {
+                                        await PhotoOfTheDayBingWallpaper(appDir);
+                                    }
+                                }
+
                                 Process.Start(exePath);
 
                                 // Source - https://stackoverflow.com/a
@@ -403,7 +425,7 @@ namespace SalsaNOW
                     if (ln.Contains("SkipSeelenUiExecution = \"0\""))
                     {
                         Stopwatch stopwatch = Stopwatch.StartNew();
-                        int timeoutMs = 10000; // 10 seconds
+                        int timeoutMs = 7000;
 
                         while (true)
                         {
@@ -703,6 +725,28 @@ namespace SalsaNOW
             return;
         }
 
+        static async Task PhotoOfTheDayBingWallpaper(string appDir)
+        {
+            string jsonUrl = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-AU";
+            string domainUrl = "https://www.bing.com";
+
+            // For photos we are going with UHD because artifacts suck
+            // photos reset every dat at 6:00 PM GMT+11 Canberra Australia.
+            using (WebClient webClient = new WebClient())
+            {
+                string json = await webClient.DownloadStringTaskAsync(jsonUrl);
+                var imagesJson = JObject.Parse(json)["images"].ToString();
+                List<BingPhotoOfTheDay> bingPhoto = JsonConvert.DeserializeObject<List<BingPhotoOfTheDay>>(imagesJson);
+
+                Console.WriteLine($"[+] Bing photo of the day: {bingPhoto[0].copyright}, {domainUrl}{bingPhoto[0].urlbase}_UHD.jpg");
+
+                // We modify WinXShells wallpaper
+                await webClient.DownloadFileTaskAsync(new Uri($"{domainUrl}{bingPhoto[0].urlbase}_UHD.jpg"), Path.Combine(appDir, "wallpaper.jpg"));
+
+                return;
+            }
+        }
+
         public class SavePath
         {
             public string configName { get; set; }
@@ -724,6 +768,12 @@ namespace SalsaNOW
             public string zipConfig { get; set; }
             public string run { get; set; }
             public string url { get; set; }
+        }
+
+        public class BingPhotoOfTheDay
+        {
+            public string urlbase { get; set; }
+            public string copyright { get; set; }
         }
     }
 }
