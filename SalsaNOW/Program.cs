@@ -731,7 +731,7 @@ namespace SalsaNOW
             string domainUrl = "https://www.bing.com";
 
             // For photos we are going with UHD because artifacts suck
-            // photos reset every dat at 6:00 PM GMT+11 Canberra Australia.
+            // photos reset every day at 6:00 PM GMT+11 Canberra Australia.
             using (WebClient webClient = new WebClient())
             {
                 string json = await webClient.DownloadStringTaskAsync(jsonUrl);
