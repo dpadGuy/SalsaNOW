@@ -51,6 +51,15 @@ namespace SalsaNOW
         [DllImport("user32.dll", EntryPoint = "FindWindow", SetLastError = true)]
         static extern IntPtr FindWindowByCaption(IntPtr ZeroOnly, string lpWindowName);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool PostMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+
         delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         const int WM_CLOSE = 0x0010;
@@ -72,12 +81,13 @@ namespace SalsaNOW
             await DesktopInstall();
             await AltTabSolution();
 
-            new Thread(TerminateGFNExplorerShell).Start();
+            _ = Task.Run(() => TerminateGFNExplorerShell());
 
             // Hide console window
             var handle = GetConsoleWindow();
             ShowWindow(handle, SW_HIDE);
 
+            _ = Task.Run(async () => await GameSavesSetup());
             StartupBatchConfig();
             ShortcutsSaving();
         }
@@ -139,6 +149,8 @@ namespace SalsaNOW
                     string zipFile = Path.Combine(globalDirectory, app.name);
                     string appExePath = Path.Combine(globalDirectory, app.exeName);
                     string appZipPath = Path.Combine(globalDirectory, app.name, app.exeName);
+                    string backupShortcutsDir = Path.Combine(globalDirectory, "Backup Shortcuts");
+                    string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
 
                     if (!Directory.Exists(zipFile))
                     {
@@ -150,9 +162,9 @@ namespace SalsaNOW
 
                             ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
 
-                            foreach (var line in salsaNowIniOpen)
+                            if (!System.IO.File.Exists($"{backupShortcutsDir}\\{app.name}.lnk"))
                             {
-                                if (line == "SkipShortcutsCreation = \"0\"")
+                                if (!System.IO.File.Exists($"{shortcutsDir}\\{app.name}.lnk"))
                                 {
                                     WshShell shell = new WshShell();
                                     IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
@@ -177,9 +189,9 @@ namespace SalsaNOW
 
                             await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
 
-                            foreach (var line in salsaNowIniOpen)
+                            if (!System.IO.File.Exists($"{backupShortcutsDir}\\{app.name}.lnk"))
                             {
-                                if (line == "SkipShortcutsCreation = \"0\"")
+                                if (!System.IO.File.Exists($"{shortcutsDir}\\{app.name}.lnk"))
                                 {
                                     WshShell shell = new WshShell();
                                     IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
@@ -202,9 +214,9 @@ namespace SalsaNOW
 
                         if (app.fileExtension == "zip")
                         {
-                            foreach (var line in salsaNowIniOpen)
+                            if (!System.IO.File.Exists($"{backupShortcutsDir}\\{app.name}.lnk"))
                             {
-                                if (line == "SkipShortcutsCreation = \"0\"")
+                                if (!System.IO.File.Exists($"{shortcutsDir}\\{app.name}.lnk"))
                                 {
                                     WshShell shell = new WshShell();
                                     IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
@@ -220,52 +232,10 @@ namespace SalsaNOW
                                 Process.Start(appZipPath);
                             }
                         }
-
-                        if (app.fileExtension == "exe")
-                        {
-                            foreach (var line in salsaNowIniOpen)
-                            {
-                                if (line == "SkipShortcutsCreation = \"0\"")
-                                {
-                                    WshShell shell = new WshShell();
-                                    IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                                    shortcut.TargetPath = appExePath;
-                                    shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
-
-                                    shortcut.Save();
-                                }
-                            }
-
-                            if (app.run == "true")
-                            {
-                                Process.Start(appExePath);
-                            }
-                        }
                     }
                 })).ToList();
 
                 await Task.WhenAll(tasks);
-
-                // Shortcurts have been made, it's up to the user if they want them created again or not
-                // We change value to 1 for skipping shortcuts creation from now on
-                for (int i = 0; i < salsaNowIniOpen.Length; i++)
-                {
-                    string line = salsaNowIniOpen[i].TrimStart();
-
-                    if (line.StartsWith("SkipShortcutsCreation"))
-                    {
-                        if (line.Contains("= \"1\""))
-                        {
-                            return;
-                        }
-
-                        // Not 1 yet, so update it
-                        salsaNowIniOpen[i] = "SkipShortcutsCreation = \"1\"";
-
-                        System.IO.File.WriteAllLines(salsaNowIniPath, salsaNowIniOpen);
-                        break;
-                    }
-                }
 
                 return;
             }
@@ -545,7 +515,7 @@ namespace SalsaNOW
 
                 foreach (string shortcut in allFiles)
                 {
-                    System.IO.File.Copy(shortcut, shortcut.Replace(shortcutsDir, desktopPath), false);
+                    System.IO.File.Copy(shortcut, shortcut.Replace(shortcutsDir, desktopPath), true);
                 }
             }
             catch { }
@@ -730,27 +700,138 @@ namespace SalsaNOW
             string jsonUrl = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-AU";
             string domainUrl = "https://www.bing.com";
 
-            // For photos we are going with UHD because artifacts suck
-            // photos reset every day at 6:00 PM GMT+11 Canberra Australia.
+            try
+            {
+                // For photos we are going with UHD because artifacts suck
+                // photos reset every day at 6:00 PM GMT+11 Canberra Australia.
+                using (WebClient webClient = new WebClient())
+                {
+                    string json = await webClient.DownloadStringTaskAsync(jsonUrl);
+                    var imagesJson = JObject.Parse(json)["images"].ToString();
+                    List<BingPhotoOfTheDay> bingPhoto = JsonConvert.DeserializeObject<List<BingPhotoOfTheDay>>(imagesJson);
+
+                    Console.WriteLine($"[+] Bing photo of the day: {bingPhoto[0].copyright}, {domainUrl}{bingPhoto[0].urlbase}_UHD.jpg");
+
+                    // We modify WinXShells wallpaper
+                    await webClient.DownloadFileTaskAsync(new Uri($"{domainUrl}{bingPhoto[0].urlbase}_UHD.jpg"), Path.Combine(appDir, "wallpaper.jpg"));
+
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+        }
+
+        static async Task GameSavesSetup()
+        {
+            string jsonUrl = "https://raw.githubusercontent.com/dpadGuy/SalsaNOWThings/refs/heads/main/GameSavesPaths.json";
+            string gameSavesPath = $"{globalDirectory}\\Game Saves";
+
             using (WebClient webClient = new WebClient())
             {
                 string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                var imagesJson = JObject.Parse(json)["images"].ToString();
-                List<BingPhotoOfTheDay> bingPhoto = JsonConvert.DeserializeObject<List<BingPhotoOfTheDay>>(imagesJson);
+                GamesSavePaths savePaths = JsonConvert.DeserializeObject<GamesSavePaths>(json);
 
-                Console.WriteLine($"[+] Bing photo of the day: {bingPhoto[0].copyright}, {domainUrl}{bingPhoto[0].urlbase}_UHD.jpg");
+                Directory.CreateDirectory(gameSavesPath);
 
-                // We modify WinXShells wallpaper
-                await webClient.DownloadFileTaskAsync(new Uri($"{domainUrl}{bingPhoto[0].urlbase}_UHD.jpg"), Path.Combine(appDir, "wallpaper.jpg"));
+                foreach (var dir in savePaths.paths)
+                {
+                    try
+                    {
+                        string lastDirectory = Path.GetFileName(dir);
+                        string craftedPath = $"{gameSavesPath}\\{lastDirectory}";
 
-                return;
+                        Directory.CreateDirectory(craftedPath);
+
+                        ProcessStartInfo psi1 = new ProcessStartInfo("cmd.exe", $"/c rmdir /s /q \"{dir}\"")
+                        {
+                            UseShellExecute = true,
+                        };
+
+                        Process process1 = Process.Start(psi1);
+
+                        Thread.Sleep(500);
+
+                        ProcessStartInfo psi2 = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{dir}\" \"{craftedPath}\"")
+                        {
+                            UseShellExecute = true,
+                        };
+
+                        Process process2 = Process.Start(psi2);
+
+                        // We close window "NvContainerWindowClass" from "NVDisplay.Container" because NVIDIA's display container keeps writing
+                        // to the documents folder from the Public user, making it in use always.
+                        if (dir.Contains("C:\\Users\\Public\\Documents"))
+                        {
+                            Process[] processes = Process.GetProcessesByName("NVDisplay.Container");
+
+                            // We now try and find the windows from NVDisplay.Container and close it.
+                            foreach (var proc in processes)
+                            {
+                                EnumWindows((hWnd, lParam) =>
+                                {
+                                    GetWindowThreadProcessId(hWnd, out uint windowPid);
+
+                                    // Only consider windows belonging to this process
+                                    if (windowPid == proc.Id)
+                                    {
+                                        var className = new System.Text.StringBuilder(256);
+                                        GetClassName(hWnd, className, className.Capacity);
+
+                                        if (className.ToString().StartsWith("NvContainerWindowClass", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            Console.WriteLine($"Found: {className}, closing...");
+                                            PostMessage(hWnd, WM_CLOSE, 0, 0);
+                                        }
+                                    }
+
+                                    return true; // continue enumerating windows
+                                }, IntPtr.Zero);
+                            }
+
+                            // We now try to delete Documents and when done create a junction of Documents from Game Saves
+                            // SalsaNOW directory until successful.
+                            bool junctionCreated = false;
+                            while (!junctionCreated)
+                            {
+                                try
+                                {
+                                    Directory.Delete(dir, true);
+
+                                    if (!Directory.Exists(dir))
+                                    {
+                                        Process.Start(psi2);
+                                        junctionCreated = true;
+                                    }
+                                }
+                                catch { }
+
+                                Thread.Sleep(100);
+                            }
+                        }
+                    }
+                    catch (Exception ex)    
+                    {
+                        Console.WriteLine(ex.ToString());
+                        Console.ReadKey();
+                        Environment.Exit(0);
+                    }
+                }
             }
+            return;
         }
 
         public class SavePath
         {
             public string configName { get; set; }
             public string directoryCreate { get; set; }
+        }
+
+        public class GamesSavePaths
+        {
+            public List<string> paths { get; set; }
         }
         public class Apps
         {
