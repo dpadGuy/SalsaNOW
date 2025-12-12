@@ -77,8 +77,8 @@ namespace SalsaNOW
 
             await Startup();
             await AppsInstall();
-            await SteamServerShutdown();
             await DesktopInstall();
+            await SteamServerShutdown();
             await AltTabSolution();
 
             _ = Task.Run(() => TerminateGFNExplorerShell());
@@ -94,7 +94,7 @@ namespace SalsaNOW
 
         static async Task Startup()
         {
-            string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/directory.json";
+            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/directory.json";
 
             try
             {
@@ -117,7 +117,7 @@ namespace SalsaNOW
 
                     if (!System.IO.File.Exists($"{globalDirectory}\\SalsaNOWConfig.ini"))
                     {
-                        await webClient.DownloadFileTaskAsync(new Uri("https://raw.githubusercontent.com/dpadGuy/SalsaNOWThings/refs/heads/main/SalsaNOWConfig.ini"), $"{globalDirectory}\\SalsaNOWConfig.ini");
+                        await webClient.DownloadFileTaskAsync(new Uri("https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/SalsaNOWConfig.ini"), $"{globalDirectory}\\SalsaNOWConfig.ini");
                     }
                 }
             }
@@ -130,7 +130,7 @@ namespace SalsaNOW
         }
         static async Task AppsInstall()
         {
-            string jsonUrl = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/apps.json";
+            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/apps.json";
             string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
 
             try
@@ -248,7 +248,7 @@ namespace SalsaNOW
         }
         static async Task DesktopInstall()
         {
-            string jsonUrl = "https://raw.githubusercontent.com/dpadGuy/SalsaNOWThings/refs/heads/main/desktop.json";
+            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/desktop.json";
             string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
 
             try
@@ -388,7 +388,7 @@ namespace SalsaNOW
                     }
                 }
 
-                Thread.Sleep(3000);
+                Thread.Sleep(6000);
 
                 foreach (var ln in salsaNowIniOpen)
                 {
@@ -397,32 +397,69 @@ namespace SalsaNOW
                         Stopwatch stopwatch = Stopwatch.StartNew();
                         int timeoutMs = 7000;
 
+                        bool seelenWallCheckedOnce = false;
+
                         while (true)
                         {
-                            bool foundAndClosed = false;
+                            bool settingsFound = false;
 
+                            // --- SETTINGS WINDOW CHECK (looped) ---
                             EnumWindows((hWnd, lParam) =>
                             {
                                 EnumChildWindows(hWnd, (child, lp) =>
                                 {
                                     var sb = new StringBuilder(512);
                                     GetWindowText(child, sb, sb.Capacity);
+
                                     if (sb.ToString().Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
                                     {
                                         SendMessage(child, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                                        foundAndClosed = true;
-                                        Console.WriteLine("[+] Seelen UI startup window has been closed.");
-                                        return false; // stop enumerating children
+                                        settingsFound = true;
+                                        Console.WriteLine("[+] Settings window closed.");
+                                        return false;
                                     }
                                     return true;
                                 }, IntPtr.Zero);
 
-                                return !foundAndClosed; // stop enumerating top-levels if found
+                                return !settingsFound;
                             }, IntPtr.Zero);
 
-                            if (foundAndClosed)
+                            Thread.Sleep(500);
+
+                            // --- SEELEN_WALL CHECK (only ONCE) ---
+                            if (!seelenWallCheckedOnce)
+                            {
+                                seelenWallCheckedOnce = true; // prevent future checks
+
+                                bool seelenWallFound = false;
+
+                                EnumWindows((hWnd, lParam) =>
+                                {
+                                    EnumChildWindows(hWnd, (child, lp) =>
+                                    {
+                                        var sb = new StringBuilder(512);
+                                        GetWindowText(child, sb, sb.Capacity);
+
+                                        if (sb.ToString().Equals("tauri.localhost/seelen_wall/index.html", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            SendMessage(child, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                                            seelenWallFound = true;
+                                            Console.WriteLine("[+] Seelen Wall window closed.");
+                                            return false;
+                                        }
+                                        return true;
+                                    }, IntPtr.Zero);
+
+                                    return !seelenWallFound;
+                                }, IntPtr.Zero);
+                            }
+
+
+                            // If settings was found, exit loop
+                            if (settingsFound)
                                 return;
 
+                            // Timeout
                             if (stopwatch.ElapsedMilliseconds > timeoutMs)
                             {
                                 Console.WriteLine("[!] Seelen UI failed to start, using WinXShell.");
@@ -453,7 +490,7 @@ namespace SalsaNOW
 
             try
             {
-                string dummyJsonLink = "https://github.com/dpadGuy/SalsaNOWThings/raw/refs/heads/main/kaka.json";
+                string dummyJsonLink = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/kaka.json";
                 string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
                 using (WebClient webClient = new WebClient())
@@ -630,7 +667,7 @@ namespace SalsaNOW
         }
         static async Task AltTabSolution()
         {
-            string ctrlTabLink = "https://github.com/dpadGuy/SalsaNOWThings/releases/download/Things/ctrl_tab.exe";
+            string ctrlTabLink = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/exes/ctrl_tab.exe";
 
             try
             {
@@ -726,7 +763,7 @@ namespace SalsaNOW
 
         static async Task GameSavesSetup()
         {
-            string jsonUrl = "https://raw.githubusercontent.com/dpadGuy/SalsaNOWThings/refs/heads/main/GameSavesPaths.json";
+            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/GameSavesPaths.json";
             string gameSavesPath = $"{globalDirectory}\\Game Saves";
 
             using (WebClient webClient = new WebClient())
