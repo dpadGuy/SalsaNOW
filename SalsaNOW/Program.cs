@@ -94,7 +94,7 @@ namespace SalsaNOW
 
         static async Task Startup()
         {
-            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/directory.json";
+            string jsonUrl = "https://salsanowfiles.work/jsons/directory.json";
 
             try
             {
@@ -117,7 +117,7 @@ namespace SalsaNOW
 
                     if (!System.IO.File.Exists($"{globalDirectory}\\SalsaNOWConfig.ini"))
                     {
-                        await webClient.DownloadFileTaskAsync(new Uri("https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/SalsaNOWConfig.ini"), $"{globalDirectory}\\SalsaNOWConfig.ini");
+                        await webClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/jsons/SalsaNOWConfig.ini"), $"{globalDirectory}\\SalsaNOWConfig.ini");
                     }
                 }
             }
@@ -130,7 +130,7 @@ namespace SalsaNOW
         }
         static async Task AppsInstall()
         {
-            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/apps.json";
+            string jsonUrl = "https://salsanowfiles.work/jsons/apps.json";
             string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
 
             try
@@ -248,7 +248,7 @@ namespace SalsaNOW
         }
         static async Task DesktopInstall()
         {
-            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/desktop.json";
+            string jsonUrl = "https://salsanowfiles.work/jsons/desktop.json";
             string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
 
             try
@@ -490,7 +490,7 @@ namespace SalsaNOW
 
             try
             {
-                string dummyJsonLink = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/kaka.json";
+                string dummyJsonLink = "https://salsanowfiles.work/jsons/kaka.json";
                 string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
                 using (WebClient webClient = new WebClient())
@@ -667,7 +667,7 @@ namespace SalsaNOW
         }
         static async Task AltTabSolution()
         {
-            string ctrlTabLink = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/exes/ctrl_tab.exe";
+            string ctrlTabLink = "https://salsanowfiles.work/exes/ctrl_tab.exe";
 
             try
             {
@@ -763,7 +763,7 @@ namespace SalsaNOW
 
         static async Task GameSavesSetup()
         {
-            string jsonUrl = "https://pub-b8de31eeed5042ee8a9182cdf910ab07.r2.dev/jsons/GameSavesPaths.json";
+            string jsonUrl = "https://salsanowfiles.work/jsons/GameSavesPaths.json";
             string gameSavesPath = $"{globalDirectory}\\Game Saves";
 
             using (WebClient webClient = new WebClient())
