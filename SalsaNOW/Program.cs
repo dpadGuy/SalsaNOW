@@ -20,6 +20,7 @@ namespace SalsaNOW
     {
         private static string globalDirectory = "";
         private static string currentPath = Directory.GetCurrentDirectory();
+        private static string customAppsJsonPath = null;
 
         // Import the FindWindow function from user32.dll
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
@@ -70,6 +71,17 @@ namespace SalsaNOW
         static async Task Main(string[] args)
         {
             Console.Title = "SalsaNOW - by dpadGuy";
+
+            // Parse command-line arguments for custom apps JSON
+            for (int i = 0; i < args.Length; i++)
+            {
+                if ((args[i] == "--apps-json" || args[i] == "-a") && i + 1 < args.Length)
+                {
+                    customAppsJsonPath = args[i + 1];
+                    Console.WriteLine($"[+] Custom apps JSON path set: {customAppsJsonPath}");
+                    i++; // Skip the next argument since it's the path
+                }
+            }
 
             // Making sure no SSL/TLS issues occur
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
@@ -137,9 +149,33 @@ namespace SalsaNOW
             {
                 var salsaNowIniOpen = System.IO.File.ReadAllLines($"{globalDirectory}\\SalsaNOWConfig.ini");
 
+                // Load built-in apps from remote JSON
                 WebClient wc = new WebClient();
                 string json = await wc.DownloadStringTaskAsync(jsonUrl);
                 List<Apps> apps = JsonConvert.DeserializeObject<List<Apps>>(json);
+
+                // Load custom apps from local JSON if provided via --apps-json argument
+                if (!string.IsNullOrEmpty(customAppsJsonPath) && System.IO.File.Exists(customAppsJsonPath))
+                {
+                    try
+                    {
+                        string customJson = System.IO.File.ReadAllText(customAppsJsonPath);
+                        List<Apps> customApps = JsonConvert.DeserializeObject<List<Apps>>(customJson);
+                        if (customApps != null && customApps.Count > 0)
+                        {
+                            apps.AddRange(customApps);
+                            Console.WriteLine($"[+] Loaded {customApps.Count} custom app(s) from {customAppsJsonPath}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[!] Failed to load custom apps JSON: {ex.Message}");
+                    }
+                }
+                else if (!string.IsNullOrEmpty(customAppsJsonPath))
+                {
+                    Console.WriteLine($"[!] Custom apps JSON file not found: {customAppsJsonPath}");
+                }
 
                 var tasks = apps.Select(app => Task.Run(async () =>
                 {
@@ -849,7 +885,7 @@ namespace SalsaNOW
                             }
                         }
                     }
-                    catch (Exception ex)    
+                    catch (Exception ex)
                     {
                         Console.WriteLine(ex.ToString());
                         Console.ReadKey();
