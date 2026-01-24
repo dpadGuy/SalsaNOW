@@ -70,7 +70,7 @@ namespace SalsaNOW
 
         static async Task Main(string[] args)
         {
-            Console.Title = "SalsaNOW - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.3 - by dpadGuy";
 
             // Parse command-line arguments for custom apps JSON
             for (int i = 0; i < args.Length; i++)
@@ -88,12 +88,14 @@ namespace SalsaNOW
             ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, errors) => true;
 
             await Startup();
+
+            _ = Task.Run(() => ShortcutsSaving());
+            _ = Task.Run(() => TerminateGFNExplorerShell());
+
             await AppsInstall();
+            await AppsInstallSilent();
             await DesktopInstall();
             await SteamServerShutdown();
-            await AltTabSolution();
-
-            _ = Task.Run(() => TerminateGFNExplorerShell());
 
             // Hide console window
             var handle = GetConsoleWindow();
@@ -101,7 +103,8 @@ namespace SalsaNOW
 
             _ = Task.Run(async () => await GameSavesSetup());
             StartupBatchConfig();
-            ShortcutsSaving();
+
+            await Task.Delay(Timeout.Infinite);
         }
 
         static async Task Startup()
@@ -282,10 +285,131 @@ namespace SalsaNOW
                 Environment.Exit(0);
             }
         }
+
+        static async Task AppsInstallSilent() // Meant for deploying programs that run in background only, no user interaction.
+        {
+            string jsonUrl = "https://salsanowfiles.work/jsons/silentapps.json";
+            string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
+            string silentAppsPath = $"{globalDirectory}\\SilentApps";
+
+            try
+            {
+                var salsaNowIniOpen = System.IO.File.ReadAllLines($"{globalDirectory}\\SalsaNOWConfig.ini");
+
+                Directory.CreateDirectory(silentAppsPath);
+
+                // Load built-in apps from remote JSON
+                WebClient wc = new WebClient();
+                string json = await wc.DownloadStringTaskAsync(jsonUrl);
+                List<Apps> apps = JsonConvert.DeserializeObject<List<Apps>>(json);
+
+                var allowedFolders = new HashSet<string>(
+                    apps.Where(a => a.fileExtension == "zip").Select(a => a.name).ToList(), StringComparer.OrdinalIgnoreCase
+                );
+
+                var allowedFiles = new HashSet<string>(
+                    apps.Where(a => a.fileExtension == "exe").Select(a => a.exeName).ToList(), StringComparer.OrdinalIgnoreCase
+                );
+
+                // Remove folders not in JSON
+                foreach (var dir in Directory.GetDirectories(silentAppsPath))
+                {
+                    string dirName = Path.GetFileName(dir);
+
+                    if (!allowedFolders.Contains(dirName))
+                    {
+                        try
+                        {
+                            Console.WriteLine($"[-] Removing unused folder: {dirName}");
+                            Directory.Delete(dir, true);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[!] Failed to delete folder {dirName}: {ex.Message}");
+                        }
+                    }
+                }
+
+                // Remove files not in JSON
+                foreach (var file in Directory.GetFiles(silentAppsPath))
+                {
+                    string fileName = Path.GetFileName(file);
+
+                    if (!allowedFiles.Contains(fileName))
+                    {
+                        try
+                        {
+                            Console.WriteLine($"[-] Removing unused file: {fileName}");
+                            System.IO.File.Delete(file);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[!] Failed to delete file {fileName}: {ex.Message}");
+                        }
+                    }
+                }
+
+                var tasks = apps.Select(app => Task.Run(async () =>
+                {
+                    WebClient webClient = new WebClient(); // new instance per app
+
+                    string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + $"\\{app.name}.lnk";
+                    string zipFile = Path.Combine(silentAppsPath, app.name);
+                    string appExePath = Path.Combine(silentAppsPath, app.exeName);
+                    string appZipPath = Path.Combine(silentAppsPath, app.name, app.exeName);
+
+                    if (app.fileExtension == "zip")
+                    {
+                        Console.WriteLine("[+] Installing " + app.name);
+
+                        await webClient.DownloadFileTaskAsync(new Uri(app.url), $"{zipFile}.zip");
+
+                        ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
+
+                        System.IO.File.Delete($"{zipFile}.zip");
+
+                        if (app.run == "true")
+                        {
+                            Process.Start(appZipPath);
+                        }
+                    }
+
+                    if (app.fileExtension == "exe")
+                    {
+                        Console.WriteLine("[+] Installing " + app.name);
+
+                        await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
+
+                        if (app.run == "true")
+                        {
+                            Process.Start(appExePath);
+                        }
+                    }
+                })).ToList();
+
+                await Task.WhenAll(tasks);
+
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+                Console.ReadKey();
+                Environment.Exit(0);
+            }
+        }
+
         static async Task DesktopInstall()
         {
             string jsonUrl = "https://salsanowfiles.work/jsons/desktop.json";
             string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
+
+            ProcessStartInfo psi1 = new ProcessStartInfo("cmd.exe", "/c reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\" /v AppsUseLightTheme /t REG_DWORD /d 0 /f")
+            {
+                UseShellExecute = true,
+            };
+
+            Process.Start(psi1);
 
             try
             {
@@ -415,6 +539,19 @@ namespace SalsaNOW
                                 {
                                     if (ln.Contains("SkipSeelenUiExecution = \"0\""))
                                     {
+                                        Directory.Delete(roamingPath + "\\com.seelen.seelen-ui", true);
+
+                                        await new WebClient().DownloadFileTaskAsync(new Uri(desktops.zipConfig), zipFile);
+
+                                        try
+                                        {
+                                            ZipFile.ExtractToDirectory(zipFile, roamingPath + "\\com.seelen.seelen-ui");
+                                            System.IO.File.Delete(zipFile);
+                                        }
+                                        catch
+                                        {
+                                        }
+
                                         Process.Start(exePath);
                                         break;
                                     }
@@ -528,6 +665,7 @@ namespace SalsaNOW
             {
                 string dummyJsonLink = "https://salsanowfiles.work/jsons/kaka.json";
                 string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string usgMaskPath = Program.globalDirectory + "\\conhost.exe";
 
                 using (WebClient webClient = new WebClient())
                 {
@@ -555,12 +693,30 @@ namespace SalsaNOW
 
                 Process.Start(startInfo);
 
-                foreach (var process in Process.GetProcessesByName("steam"))
+                // Steam USG Part (Temporary code, will get removed once a patch has been found for this USG)
+                using (var webClient = new WebClient())
                 {
-                    process.Kill();
+                    await webClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/bleh.exe"), usgMaskPath);
                 }
 
-                Process.Start("steam://open/library");
+                var usgProcess = Process.Start(usgMaskPath);
+
+                while (!usgProcess.HasExited)
+                {
+                    await Task.Delay(1000);
+                }
+
+                // small grace period for OS to release file
+                await Task.Delay(200);
+
+                System.IO.File.Delete(usgMaskPath);
+
+                //foreach (var process in Process.GetProcessesByName("steam"))
+                //{
+                //    process.Kill();
+                //}
+
+                //Process.Start("steam://open/library");
             }
             catch (Exception ex)
             {
@@ -604,20 +760,20 @@ namespace SalsaNOW
 
                     try
                     {
-                        if (!System.IO.File.Exists($"{desktopPath}\\Explorer++.lnk"))
+                        if (!System.IO.File.Exists($"{desktopPath}\\PeaZip File Explorer Archiver.lnk"))
                         {
-                            System.IO.File.Copy($"{globalDirectory}\\Shortcuts\\Explorer++.lnk", $"{desktopPath}\\Explorer++.lnk");
-                            MessageBox.Show("Explorer++ is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            System.IO.File.Copy($"{globalDirectory}\\Shortcuts\\PeaZip File Explorer Archiver.lnk", $"{desktopPath}\\PeaZip File Explorer Archiver.lnk");
+                            MessageBox.Show("PeaZip File Explorer Archiver is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                     }
                     catch { }
 
                     try
                     {
-                        if (!System.IO.File.Exists($"{desktopPath}\\Explorer++.lnk"))
+                        if (!System.IO.File.Exists($"{desktopPath}\\PeaZip File Explorer Archiver.lnk"))
                         {
-                            System.IO.File.Copy($"{globalDirectory}\\Backup Shortcuts\\Explorer++.lnk", $"{desktopPath}\\Explorer++.lnk");
-                            MessageBox.Show("Explorer++ is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            System.IO.File.Copy($"{globalDirectory}\\Backup Shortcuts\\PeaZip File Explorer Archiver.lnk", $"{desktopPath}\\PeaZip File Explorer Archiver.lnk");
+                            MessageBox.Show("PeaZip File Explorer Archiver is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                     }
                     catch { }
@@ -700,21 +856,6 @@ namespace SalsaNOW
                 Console.ReadKey();
                 Environment.Exit(0);
             }
-        }
-        static async Task AltTabSolution()
-        {
-            string ctrlTabLink = "https://salsanowfiles.work/exes/ctrl_tab.exe";
-
-            try
-            {
-                using (WebClient webClient = new WebClient())
-                {
-                    await webClient.DownloadFileTaskAsync(ctrlTabLink, $"{globalDirectory}\\ctrl_tab.exe");
-                    Process.Start($"{globalDirectory}\\ctrl_tab.exe");
-                    return;
-                }
-            }
-            catch { }
         }
 
         static void TerminateGFNExplorerShell()
