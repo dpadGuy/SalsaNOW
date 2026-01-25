@@ -1,3 +1,3 @@
 # SalsaNOW
 
-**Updater: https://github.com/dpadGuy/SalsaNOWThings/releases/download/Things/SalsaNOWUpdater.exe**
+**Updater: https://salsanowfiles.work/SalsaNOW/SalsaNOWUpdater.exe**
