@@ -285,7 +285,6 @@ namespace SalsaNOW
                 Environment.Exit(0);
             }
         }
-
         static async Task AppsInstallSilent() // Meant for deploying programs that run in background only, no user interaction.
         {
             string jsonUrl = "https://salsanowfiles.work/jsons/silentapps.json";
@@ -301,14 +300,14 @@ namespace SalsaNOW
                 // Load built-in apps from remote JSON
                 WebClient wc = new WebClient();
                 string json = await wc.DownloadStringTaskAsync(jsonUrl);
-                List<Apps> apps = JsonConvert.DeserializeObject<List<Apps>>(json);
+                List<SilentApps> apps = JsonConvert.DeserializeObject<List<SilentApps>>(json);
 
                 var allowedFolders = new HashSet<string>(
                     apps.Where(a => a.fileExtension == "zip").Select(a => a.name).ToList(), StringComparer.OrdinalIgnoreCase
                 );
 
                 var allowedFiles = new HashSet<string>(
-                    apps.Where(a => a.fileExtension == "exe").Select(a => a.exeName).ToList(), StringComparer.OrdinalIgnoreCase
+                    apps.Where(a => a.fileExtension == "exe").Select(a => a.fileName + "." + a.fileExtension).ToList(), StringComparer.OrdinalIgnoreCase
                 );
 
                 // Remove folders not in JSON
@@ -355,34 +354,52 @@ namespace SalsaNOW
 
                     string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + $"\\{app.name}.lnk";
                     string zipFile = Path.Combine(silentAppsPath, app.name);
-                    string appExePath = Path.Combine(silentAppsPath, app.exeName);
-                    string appZipPath = Path.Combine(silentAppsPath, app.name, app.exeName);
+                    string appPath = Path.Combine(silentAppsPath, app.fileName + "." + app.fileExtension);
+                    //string appZipPath = Path.Combine(silentAppsPath, app.name, app.exeName); // TODO: Work on a fix for this.
 
-                    if (app.fileExtension == "zip")
-                    {
-                        Console.WriteLine("[+] Installing " + app.name);
+                    //if (app.fileExtension == "zip")
+                    //{
+                    //    Console.WriteLine("[+] Installing " + app.name);
 
-                        await webClient.DownloadFileTaskAsync(new Uri(app.url), $"{zipFile}.zip");
+                    //    await webClient.DownloadFileTaskAsync(new Uri(app.url), $"{zipFile}.zip");
 
-                        ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
+                    //    ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
 
-                        System.IO.File.Delete($"{zipFile}.zip");
+                    //    System.IO.File.Delete($"{zipFile}.zip");
 
-                        if (app.run == "true")
-                        {
-                            Process.Start(appZipPath);
-                        }
-                    }
+                    //    if (app.run == "true")
+                    //    {
+                    //        Process.Start(appZipPath);
+                    //    }
+                    //}
 
                     if (app.fileExtension == "exe")
                     {
                         Console.WriteLine("[+] Installing " + app.name);
 
-                        await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
+                        await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
 
                         if (app.run == "true")
                         {
-                            Process.Start(appExePath);
+                            Process.Start(appPath);
+                        }
+                    }
+
+                    if (app.fileExtension == "bat")
+                    {
+                        Console.WriteLine("[+] Installing " + app.name);
+
+                        await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
+
+                        if (app.run == "true")
+                        {
+                            var startInfo = new ProcessStartInfo
+                            {
+                                FileName = appPath,
+                                UseShellExecute = true,
+                            };
+
+                            Process.Start(startInfo);
                         }
                     }
                 })).ToList();
@@ -1055,6 +1072,16 @@ namespace SalsaNOW
             public string run { get; set; }
             public string url { get; set; }
         }
+
+        public class SilentApps
+        {
+            public string name { get; set; }
+            public string fileExtension { get; set; }
+            public string fileName { get; set; }
+            public string run { get; set; }
+            public string url { get; set; }
+        }
+
         public class DesktopInfo
         {
             public string name { get; set; }
