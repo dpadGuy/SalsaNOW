@@ -104,6 +104,8 @@ namespace SalsaNOW
             _ = Task.Run(async () => await GameSavesSetup());
             StartupBatchConfig();
 
+            _ = Task.Run(() => BrickPrevention());
+
             await Task.Delay(Timeout.Infinite);
         }
 
@@ -760,6 +762,7 @@ namespace SalsaNOW
         static void ShortcutsSaving()
         {
             string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            string startMenuPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\Microsoft\\Windows\\Start Menu\\Programs";
             string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
             string backupShortcutsDir = Path.Combine(globalDirectory, "Backup Shortcuts");
 
@@ -831,6 +834,7 @@ namespace SalsaNOW
 
                     // Copy shortcuts from Desktop to Shortcuts directory
                     var lnkFilesDesktop = Directory.EnumerateFiles(desktopPath, "*.lnk", SearchOption.AllDirectories);
+
                     foreach (var file in lnkFilesDesktop)
                     {
                         try
@@ -839,6 +843,22 @@ namespace SalsaNOW
                             string destPath = Path.Combine(shortcutsDir, relativePath);
 
                             Directory.CreateDirectory(Path.GetDirectoryName(destPath));
+                            System.IO.File.Copy(file, destPath, false);
+                            Console.WriteLine($"[+] Synced: {relativePath}");
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    // Copy shortcuts from Desktop to Start Menu directory
+                    foreach (var file in lnkFilesDesktop)
+                    {
+                        try
+                        {
+                            string relativePath = file.Substring(startMenuPath.Length + 1);
+                            string destPath = Path.Combine(shortcutsDir, relativePath);
+
                             System.IO.File.Copy(file, destPath, false);
                             Console.WriteLine($"[+] Synced: {relativePath}");
                         }
@@ -1066,6 +1086,58 @@ namespace SalsaNOW
                 }
             }
             return;
+        }
+
+        static void BrickPrevention()
+        {
+            string userData = "C:\\Program Files (x86)\\Steam\\userdata";
+            string fileCheck = "localconfig.vdf";
+            string blackListedWord = "\"LaunchOptions\"";
+
+            while (true)
+            {
+                Thread.Sleep(1500);
+
+                try
+                {
+                    var listPaths = Directory.EnumerateFiles(userData, fileCheck, SearchOption.AllDirectories);
+
+                    foreach (string currentFile in listPaths)
+                    {
+                        StreamReader reader = new StreamReader(currentFile);
+
+                        string text = reader.ReadToEnd();
+
+                        if (text.Contains(blackListedWord))
+                        {
+                            reader.Close();
+
+                            System.IO.File.Delete(currentFile);
+
+                            //Directory.Delete(userData);
+
+                            var handle = GetConsoleWindow();
+                            ShowWindow(handle, SW_SHOW);
+
+                            Console.ForegroundColor = ConsoleColor.Red;
+
+                            Console.WriteLine("[!] STEAM LAUNCH OPTIONS DETECTED, DO NOT USE STEAM LAUNCH OPTIONS, session terminated.");
+
+                            foreach (var process in Process.GetProcessesByName("steam"))
+                            {
+                                process.Kill();
+                            }
+                        }
+                        else
+                        {
+                            reader.Close();
+                        }
+                    }
+                }
+                catch
+                {
+                }
+            }
         }
 
         public class SavePath
