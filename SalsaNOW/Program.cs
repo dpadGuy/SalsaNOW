@@ -21,7 +21,8 @@ namespace SalsaNOW
         private static string globalDirectory = "";
         private static string currentPath = Directory.GetCurrentDirectory();
         private static string customAppsJsonPath = null;
-
+        
+        // Windows APIS
         // Import the FindWindow function from user32.dll
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
@@ -68,9 +69,61 @@ namespace SalsaNOW
         const int SW_HIDE = 0;
         const int SW_SHOW = 5;
 
+        // Credit: https://github.com/mercuryy-1337/
+        // Nvidia APIS
+        [DllImport("nvapi64.dll", EntryPoint = "nvapi_QueryInterface", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr NvAPI_QueryInterface(uint id);
+
+        // important nvapi function ids
+        private const uint ID_NvAPI_Initialize = 0x0150E828;
+        private const uint ID_NvAPI_Unload = 0xD22BDD7E;
+        private const uint ID_NvAPI_DRS_CreateSession = 0x0694D52E;
+        private const uint ID_NvAPI_DRS_DestroySession = 0xDAD9CFF8;
+        private const uint ID_NvAPI_DRS_LoadSettings = 0x375DBD6B;
+        private const uint ID_NvAPI_DRS_SaveSettings = 0xFCBC7E14;
+        private const uint ID_NvAPI_DRS_RestoreAllDefaults = 0x5927B094;
+
+        // status code sanity check
+        private const int NVAPI_OK = 0;
+
+        //Delegate signatures matching the NVAPI Cdecl calling convention
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Del_NvAPI_Initialize();
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Del_NvAPI_Unload();
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Del_NvAPI_DRS_CreateSession(out IntPtr hSession);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Del_NvAPI_DRS_DestroySession(IntPtr hSession);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Del_NvAPI_DRS_LoadSettings(IntPtr hSession);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Del_NvAPI_DRS_SaveSettings(IntPtr hSession);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int Del_NvAPI_DRS_RestoreAllDefaults(IntPtr hSession);
+
+        private static T GetDelegate<T>(uint id) where T : Delegate
+        {
+            IntPtr ptr = NvAPI_QueryInterface(id);
+            if (ptr == IntPtr.Zero)
+                //this should obviously work in GFN but adding this just in case Nvidia makes a stupid patch in the future but shouldn't be possible without breaking games and requiring them to run as Xen
+                throw new EntryPointNotFoundException(
+                    $"NVAPI function 0x{id:X8} could not be resolved. " +
+                    "Ensure an NVIDIA GPU driver is installed.");
+            return Marshal.GetDelegateForFunctionPointer<T>(ptr);
+        }
+
         static async Task Main(string[] args)
         {
             Console.Title = "SalsaNOW V1.6.3 - by dpadGuy";
+
+            EnableRTX();
 
             // Parse command-line arguments for custom apps JSON
             for (int i = 0; i < args.Length; i++)
@@ -93,9 +146,11 @@ namespace SalsaNOW
             _ = Task.Run(() => TerminateGFNExplorerShell());
 
             await AppsInstall();
-            await AppsInstallSilent();
             await DesktopInstall();
+            await AppsInstallSilent();
             await SteamServerShutdown();
+
+            EnableRTX();
 
             // Hide console window
             var handle = GetConsoleWindow();
@@ -619,7 +674,7 @@ namespace SalsaNOW
 
                                     if (sb.ToString().Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
                                     {
-                                        SendMessage(child, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                                        PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                                         settingsFound = true;
                                         Console.WriteLine("[+] Settings window closed.");
                                         return false;
@@ -725,6 +780,8 @@ namespace SalsaNOW
                 };
 
                 Process.Start(startInfo);
+
+                Directory.Delete("C:\\Program Files (x86)\\Steam\\appcache", true);
 
                 // Steam USG Part (Temporary code, will get removed once a patch has been found for this USG)
                 using (var webClient = new WebClient())
@@ -1137,6 +1194,59 @@ namespace SalsaNOW
                 catch
                 {
                 }
+            }
+        }
+
+        static void EnableRTX()
+        {
+            // Credit: https://github.com/mercuryy-1337/
+            // NvAPI init, starting point
+            var initialize = GetDelegate<Del_NvAPI_Initialize>(ID_NvAPI_Initialize);
+            int status = initialize();
+            if (status != NVAPI_OK)
+                throw new InvalidOperationException($"NvAPI_Initialize failed with status {status}.");
+
+            IntPtr hSession = IntPtr.Zero;
+            try
+            {
+                var createSession = GetDelegate<Del_NvAPI_DRS_CreateSession>(ID_NvAPI_DRS_CreateSession);
+                status = createSession(out hSession);
+                if (status != NVAPI_OK)
+                    throw new InvalidOperationException($"NvAPI_DRS_CreateSession failed with status {status}.");
+
+                var loadSettings = GetDelegate<Del_NvAPI_DRS_LoadSettings>(ID_NvAPI_DRS_LoadSettings);
+                status = loadSettings(hSession);
+                if (status != NVAPI_OK)
+                    throw new InvalidOperationException($"NvAPI_DRS_LoadSettings failed with status {status}.");
+
+                var restoreDefaults = GetDelegate<Del_NvAPI_DRS_RestoreAllDefaults>(ID_NvAPI_DRS_RestoreAllDefaults);
+                status = restoreDefaults(hSession);
+                if (status != NVAPI_OK)
+                    throw new InvalidOperationException($"NvAPI_DRS_RestoreAllDefaults failed with status {status}.");
+
+                var saveSettings = GetDelegate<Del_NvAPI_DRS_SaveSettings>(ID_NvAPI_DRS_SaveSettings);
+                status = saveSettings(hSession);
+                if (status != NVAPI_OK)
+                    throw new InvalidOperationException($"NvAPI_DRS_SaveSettings failed with status {status}.");
+            }
+            finally
+            {
+                if (hSession != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var destroySession = GetDelegate<Del_NvAPI_DRS_DestroySession>(ID_NvAPI_DRS_DestroySession);
+                        destroySession(hSession);
+                    }
+                    catch { /* best-effort cleanup but there shouldn't be anything to catch really */ }
+                }
+
+                try
+                {
+                    var unload = GetDelegate<Del_NvAPI_Unload>(ID_NvAPI_Unload);
+                    unload();
+                }
+                catch { /* same as above */ }
             }
         }
 
