@@ -123,8 +123,6 @@ namespace SalsaNOW
         {
             Console.Title = "SalsaNOW V1.6.3 - by dpadGuy";
 
-            EnableRTX();
-
             // Parse command-line arguments for custom apps JSON
             for (int i = 0; i < args.Length; i++)
             {
@@ -1199,55 +1197,65 @@ namespace SalsaNOW
 
         static void EnableRTX()
         {
-            // Credit: https://github.com/mercuryy-1337/
-            // NvAPI init, starting point
-            var initialize = GetDelegate<Del_NvAPI_Initialize>(ID_NvAPI_Initialize);
-            int status = initialize();
-            if (status != NVAPI_OK)
-                throw new InvalidOperationException($"NvAPI_Initialize failed with status {status}.");
+            var salsaNowIniOpen = System.IO.File.ReadAllLines($"{globalDirectory}\\SalsaNOWConfig.ini");
 
-            IntPtr hSession = IntPtr.Zero;
-            try
+            foreach (var ln in salsaNowIniOpen)
             {
-                var createSession = GetDelegate<Del_NvAPI_DRS_CreateSession>(ID_NvAPI_DRS_CreateSession);
-                status = createSession(out hSession);
-                if (status != NVAPI_OK)
-                    throw new InvalidOperationException($"NvAPI_DRS_CreateSession failed with status {status}.");
-
-                var loadSettings = GetDelegate<Del_NvAPI_DRS_LoadSettings>(ID_NvAPI_DRS_LoadSettings);
-                status = loadSettings(hSession);
-                if (status != NVAPI_OK)
-                    throw new InvalidOperationException($"NvAPI_DRS_LoadSettings failed with status {status}.");
-
-                var restoreDefaults = GetDelegate<Del_NvAPI_DRS_RestoreAllDefaults>(ID_NvAPI_DRS_RestoreAllDefaults);
-                status = restoreDefaults(hSession);
-                if (status != NVAPI_OK)
-                    throw new InvalidOperationException($"NvAPI_DRS_RestoreAllDefaults failed with status {status}.");
-
-                var saveSettings = GetDelegate<Del_NvAPI_DRS_SaveSettings>(ID_NvAPI_DRS_SaveSettings);
-                status = saveSettings(hSession);
-                if (status != NVAPI_OK)
-                    throw new InvalidOperationException($"NvAPI_DRS_SaveSettings failed with status {status}.");
-            }
-            finally
-            {
-                if (hSession != IntPtr.Zero)
+                if (ln.Contains("NvidiaRaytracing = \"1\""))
                 {
+                    // Credit: https://github.com/mercuryy-1337/
+                    // NvAPI init, starting point
+                    var initialize = GetDelegate<Del_NvAPI_Initialize>(ID_NvAPI_Initialize);
+                    int status = initialize();
+                    if (status != NVAPI_OK)
+                        throw new InvalidOperationException($"NvAPI_Initialize failed with status {status}.");
+
+                    IntPtr hSession = IntPtr.Zero;
                     try
                     {
-                        var destroySession = GetDelegate<Del_NvAPI_DRS_DestroySession>(ID_NvAPI_DRS_DestroySession);
-                        destroySession(hSession);
-                    }
-                    catch { /* best-effort cleanup but there shouldn't be anything to catch really */ }
-                }
+                        var createSession = GetDelegate<Del_NvAPI_DRS_CreateSession>(ID_NvAPI_DRS_CreateSession);
+                        status = createSession(out hSession);
+                        if (status != NVAPI_OK)
+                            throw new InvalidOperationException($"NvAPI_DRS_CreateSession failed with status {status}.");
 
-                try
-                {
-                    var unload = GetDelegate<Del_NvAPI_Unload>(ID_NvAPI_Unload);
-                    unload();
+                        var loadSettings = GetDelegate<Del_NvAPI_DRS_LoadSettings>(ID_NvAPI_DRS_LoadSettings);
+                        status = loadSettings(hSession);
+                        if (status != NVAPI_OK)
+                            throw new InvalidOperationException($"NvAPI_DRS_LoadSettings failed with status {status}.");
+
+                        var restoreDefaults = GetDelegate<Del_NvAPI_DRS_RestoreAllDefaults>(ID_NvAPI_DRS_RestoreAllDefaults);
+                        status = restoreDefaults(hSession);
+                        if (status != NVAPI_OK)
+                            throw new InvalidOperationException($"NvAPI_DRS_RestoreAllDefaults failed with status {status}.");
+
+                        var saveSettings = GetDelegate<Del_NvAPI_DRS_SaveSettings>(ID_NvAPI_DRS_SaveSettings);
+                        status = saveSettings(hSession);
+                        if (status != NVAPI_OK)
+                            throw new InvalidOperationException($"NvAPI_DRS_SaveSettings failed with status {status}.");
+                    }
+                    finally
+                    {
+                        if (hSession != IntPtr.Zero)
+                        {
+                            try
+                            {
+                                var destroySession = GetDelegate<Del_NvAPI_DRS_DestroySession>(ID_NvAPI_DRS_DestroySession);
+                                destroySession(hSession);
+                            }
+                            catch { /* best-effort cleanup but there shouldn't be anything to catch really */ }
+                        }
+
+                        try
+                        {
+                            var unload = GetDelegate<Del_NvAPI_Unload>(ID_NvAPI_Unload);
+                            unload();
+                        }
+                        catch { /* same as above */ }
+                    }
                 }
-                catch { /* same as above */ }
             }
+
+            return;
         }
 
         public class SavePath
