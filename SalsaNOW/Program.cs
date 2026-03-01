@@ -533,7 +533,21 @@ namespace SalsaNOW
 
                             if (desktops.name.Contains("WinXShell"))
                             {
-                                Process.Start(exePath);
+                                try
+                                {
+                                    if (System.IO.File.Exists(exePath))
+                                    {
+                                        Process.Start(exePath);
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine($"[!] WinXShell executable not found: {exePath}");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[!] Failed to start WinXShell: {ex.Message}");
+                                }
 
                                 System.IO.File.Delete(zipFile);
 
@@ -577,7 +591,21 @@ namespace SalsaNOW
 
                                     if (line.Contains("SkipSeelenUiExecution = \"0\""))
                                     {
-                                        Process.Start(exePath);
+                                        try
+                                        {
+                                            if (System.IO.File.Exists(exePath))
+                                            {
+                                                Process.Start(exePath);
+                                            }
+                                            else
+                                            {
+                                                Console.WriteLine($"[!] Seelen UI executable not found: {exePath}");
+                                            }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            Console.WriteLine($"[!] Failed to start Seelen UI: {ex.Message}");
+                                        }
                                     }
                                 }
                             }
@@ -597,7 +625,21 @@ namespace SalsaNOW
                                     }
                                 }
 
-                                Process.Start(exePath);
+                                try
+                                {
+                                    if (System.IO.File.Exists(exePath))
+                                    {
+                                        Process.Start(exePath);
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine($"[!] WinXShell executable not found: {exePath}");
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[!] Failed to start WinXShell: {ex.Message}");
+                                }
 
                                 // Source - https://stackoverflow.com/a
                                 // Posted by Sergey Vyacheslavovich Brunov, modified by community. See post 'Timeline' for change history
@@ -638,7 +680,21 @@ namespace SalsaNOW
                                         {
                                         }
 
-                                        Process.Start(exePath);
+                                        try
+                                        {
+                                            if (System.IO.File.Exists(exePath))
+                                            {
+                                                Process.Start(exePath);
+                                            }
+                                            else
+                                            {
+                                                Console.WriteLine($"[!] Seelen UI executable not found: {exePath}");
+                                            }
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            Console.WriteLine($"[!] Failed to start Seelen UI: {ex.Message}");
+                                        }
                                         break;
                                     }
                                 }
