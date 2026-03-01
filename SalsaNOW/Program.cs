@@ -16,24 +16,9 @@ using System.Windows.Forms;
 using File = System.IO.File;
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
-// ║  Rewrite notes vs. original:                                             ║
-// ║                                                                          ║
-// ║  FIXED:                                                                  ║
-// ║  • All Thread.Sleep() in async context → await Task.Delay()              ║
-// ║  • WebClient instances in parallel tasks are now properly disposed       ║
-// ║  • seelenui first-install: config downloaded once, not per ini line      ║
-// ║  • seelenui re-install: Directory.Delete guarded with existence check    ║
-// ║  • WinXShell infinite spin-loops → async timeout helper                  ║
-// ║  • ShortcutsSaving: startMenuPath.Length on desktop paths → crash fixed  ║
-// ║  • ShortcutsSaving: `break` in backup loop → `continue`                  ║
-// ║  • BrickPrevention: StreamReader not disposed → File.ReadAllText         ║
-// ║  • GameSavesSetup: WebClient not disposed, junction loop has timeout     ║
-// ║  • SteamServerShutdown: Process.Start null-guard added                   ║
-// ║  • DesktopInstall: duplicate File.Delete for WinXShell zip removed       ║
-// ║  • PhotoOfTheDayBingWallpaper: null/empty list guard on bingPhoto[0]     ║
-// ║    if it stops working unexpectedly                                      ║
-// ║  • Shortcut creation extracted to reusable helper (was duplicated 6x)    ║
-// ║  • ShowConsole() helper extracted (was duplicated 3x)                    ║
+// ║  NEW:                                                                    ║
+// ║  • EacWatcher() – polls every 1s for known EAC process names, kills      ║
+// ║    all instances immediately, and notifies the user.                     ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
 
 namespace SalsaNOW
@@ -46,10 +31,8 @@ namespace SalsaNOW
 
         // ── Windows APIs ─────────────────────────────────────────────────────
         // Import the FindWindow function from user32.dll
-
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-
         // Import the PostMessage function from user32.dll
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -95,8 +78,8 @@ namespace SalsaNOW
         // Credit: https://github.com/mercuryy-1337/
 
         [DllImport("nvapi64.dll", EntryPoint = "nvapi_QueryInterface", CallingConvention = CallingConvention.Cdecl)]
-     
         private static extern IntPtr NvAPI_QueryInterface(uint id);
+
         // important nvapi function ids
         private const uint ID_NvAPI_Initialize             = 0x0150E828;
         private const uint ID_NvAPI_Unload                 = 0xD22BDD7E;
@@ -105,9 +88,9 @@ namespace SalsaNOW
         private const uint ID_NvAPI_DRS_LoadSettings       = 0x375DBD6B;
         private const uint ID_NvAPI_DRS_SaveSettings       = 0xFCBC7E14;
         private const uint ID_NvAPI_DRS_RestoreAllDefaults = 0x5927B094;
+
         // sanity check
         private const int NVAPI_OK = 0;
-
         //Delegate signatures matching the NVAPI Cdecl calling convention
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_Initialize();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_Unload();
@@ -158,6 +141,9 @@ namespace SalsaNOW
 
             _ = Task.Run(() => ShortcutsSaving());
             _ = Task.Run(() => TerminateGFNExplorerShell());
+
+            // EAC watcher – starts immediately so it catches any launch attempt during setup too
+            _ = Task.Run(() => EacWatcher());
 
             await AppsInstall();
             await DesktopInstall();
@@ -476,7 +462,7 @@ namespace SalsaNOW
                 var iniLines        = File.ReadAllLines(Path.Combine(globalDirectory, "SalsaNOWConfig.ini"));
 
                 // Pre-compute ini flags once instead of re-checking inside nested loops
-                bool skipSeelenExecution = iniLines.Any(l => l.Contains("SkipSeelenUiExecution = \"0\""));
+                bool skipSeelenExecution  = iniLines.Any(l => l.Contains("SkipSeelenUiExecution = \"0\""));
                 bool bingWallpaperEnabled = iniLines.Any(l => l.Contains("BingPhotoOfTheDayWallpaper = \"1\""));
 
                 using (var webClient = new WebClient())
@@ -491,10 +477,10 @@ namespace SalsaNOW
 
                     foreach (var desktop in desktopInfo)
                     {
-                        string appDir      = Path.Combine(globalDirectory, desktop.name);
-                        string zipFile     = Path.Combine(globalDirectory, desktop.name + ".zip");
-                        string exePath     = Path.Combine(appDir, desktop.exeName);
-                        string roamingPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                        string appDir       = Path.Combine(globalDirectory, desktop.name);
+                        string zipFile      = Path.Combine(globalDirectory, desktop.name + ".zip");
+                        string exePath      = Path.Combine(appDir, desktop.exeName);
+                        string roamingPath  = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
                         string seelenCfgDir = Path.Combine(roamingPath, "com.seelen.seelen-ui");
 
                         if (!Directory.Exists(appDir))
@@ -911,6 +897,107 @@ namespace SalsaNOW
         }
 
         // ════════════════════════════════════════════════════════════════════
+        // EAC WATCHER  (background loop)
+        // ════════════════════════════════════════════════════════════════════
+
+        // Detect if the User is running an EAC Window
+        // process-name polling is the only reliable detection method.
+        // Covered process names (all EAC variants seen on Steam):
+        //   EasyAntiCheat_EOS_Setup  ← Newest Name
+        //   EasyAntiCheat_Setup      ← older EAC installer name
+        //   EasyAntiCheat            ← the EAC service/runtime process
+        //   EasyAntiCheat_EOS        ← EOS variant runtime
+        static void EacWatcher()
+        {
+            // Process.GetProcessesByName() matches WITHOUT the .exe extension.
+            var eacProcessNames = new[]
+            {
+                "EasyAntiCheat_EOS_Setup",
+                "EasyAntiCheat_Setup",
+                "EasyAntiCheat",
+                "EasyAntiCheat_EOS",
+            };
+
+            // Cooldown between popups so EAC retries don't spam the user.
+            const int popupCooldownMs = 15_000;
+
+            DateTime lastPopupTime = DateTime.MinValue;
+
+            bool popupPending = false; // plain bool is fine
+
+            while (true)
+            {
+                Thread.Sleep(1000);
+
+                try
+                {
+                    // Collect all running EAC processes across all known names
+                    var eacProcesses = eacProcessNames
+                        .SelectMany(name =>
+                        {
+                            try   { return Process.GetProcessesByName(name); }
+                            catch { return Array.Empty<Process>(); }
+                        })
+                        .ToList();
+
+                    if (eacProcesses.Count == 0)
+                        continue;
+
+                    // ── Kill every EAC process found ─────────────────────────
+                    int killed = 0;
+                    foreach (var proc in eacProcesses)
+                    {
+                        try
+                        {
+                            if (!proc.HasExited)
+                            {
+                                proc.Kill();
+                                killed++;
+                                Console.WriteLine($"[!] EAC killed: {proc.ProcessName} (PID {proc.Id})");
+                            }
+                        }
+                        catch { /* already exited between check and kill */ }
+                        finally { proc.Dispose(); }
+                    }
+
+                    if (killed == 0)
+                        continue; // all were already dead before we got to them
+
+                    // ── Notify user once per cooldown period ─────────────────
+                    // Skip if a popup is already on screen, or cooldown hasn't elapsed.
+                    bool cooldownElapsed = (DateTime.Now - lastPopupTime).TotalMilliseconds >= popupCooldownMs;
+                    if (!popupPending && cooldownElapsed)
+                    {
+                        popupPending   = true;
+                        lastPopupTime  = DateTime.Now;
+
+                        // STA thread required for MessageBox.Show.
+                        // Separate thread keeps the kill loop running while dialog is open.
+                        var popupThread = new Thread(() =>
+                        {
+                            MessageBox.Show(
+                                "An Easy Anti-Cheat (EAC) protected game was detected.\n\n" +
+                                "EAC games are NOT supported on SalsaNOW sessions " +
+                                "and cannot be launched.\n\n" +
+                                "All EAC processes have been closed automatically.\n" +
+                                "Please launch a game that does not use Easy Anti-Cheat.",
+                                "SalsaNOW – EAC Not Supported",
+                                MessageBoxButtons.OK,
+                                MessageBoxIcon.Warning);
+
+                            popupPending = false; // allow next popup after cooldown
+                        });
+
+                        popupThread.IsBackground = true;
+                        popupThread.SetApartmentState(ApartmentState.STA); // must be called before Start()
+                        popupThread.Start();
+                    }
+                }
+                catch { /* never let the watcher crash */ }
+            }
+        }
+
+        // ════════════════════════════════════════════════════════════════════
         // STARTUP BATCH CONFIG
         // ════════════════════════════════════════════════════════════════════
 
@@ -1164,7 +1251,6 @@ namespace SalsaNOW
         /// Polls for a window with the given caption and closes it via WM_CLOSE.
         /// Fully async cause it uses await Task.Delay instead of Thread.Sleep.
         /// Has a configurable timeout so the loop cannot spin forever.
-    
         static async Task CloseWindowWithTimeoutAsync(string caption, int timeoutMs)
         {
             var sw = Stopwatch.StartNew();
@@ -1225,7 +1311,7 @@ namespace SalsaNOW
             public string name          { get; set; }
             public string fileExtension { get; set; }
             public string exeName       { get; set; }
-            public string run           { get; set; } 
+            public string run           { get; set; }
             public string url           { get; set; }
         }
 
@@ -1234,8 +1320,8 @@ namespace SalsaNOW
             public string name          { get; set; }
             public string fileExtension { get; set; }
             public string fileName      { get; set; }
-            public string archive       { get; set; } 
-            public string run           { get; set; } 
+            public string archive       { get; set; }
+            public string run           { get; set; }
             public string url           { get; set; }
         }
 
