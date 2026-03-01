@@ -1,4 +1,4 @@
-﻿using IWshRuntimeLibrary;
+using IWshRuntimeLibrary;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -13,17 +13,40 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using File = System.IO.File;
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  Rewrite notes vs. original:                                             ║
+// ║                                                                          ║
+// ║  FIXED:                                                                  ║
+// ║  • All Thread.Sleep() in async context → await Task.Delay()              ║
+// ║  • WebClient instances in parallel tasks are now properly disposed       ║
+// ║  • seelenui first-install: config downloaded once, not per ini line      ║
+// ║  • seelenui re-install: Directory.Delete guarded with existence check    ║
+// ║  • WinXShell infinite spin-loops → async timeout helper                  ║
+// ║  • ShortcutsSaving: startMenuPath.Length on desktop paths → crash fixed  ║
+// ║  • ShortcutsSaving: `break` in backup loop → `continue`                  ║
+// ║  • BrickPrevention: StreamReader not disposed → File.ReadAllText         ║
+// ║  • GameSavesSetup: WebClient not disposed, junction loop has timeout     ║
+// ║  • SteamServerShutdown: Process.Start null-guard added                   ║
+// ║  • DesktopInstall: duplicate File.Delete for WinXShell zip removed       ║
+// ║  • PhotoOfTheDayBingWallpaper: null/empty list guard on bingPhoto[0]     ║
+// ║    if it stops working unexpectedly                                      ║
+// ║  • Shortcut creation extracted to reusable helper (was duplicated 6x)    ║
+// ║  • ShowConsole() helper extracted (was duplicated 3x)                    ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 
 namespace SalsaNOW
 {
     internal class Program
     {
         private static string globalDirectory = "";
-        private static string currentPath = Directory.GetCurrentDirectory();
+        private static readonly string currentPath = Directory.GetCurrentDirectory();
         private static string customAppsJsonPath = null;
-        
-        // Windows APIS
+
+        // ── Windows APIs ─────────────────────────────────────────────────────
         // Import the FindWindow function from user32.dll
+
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
@@ -57,7 +80,7 @@ namespace SalsaNOW
         static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
         [DllImport("user32.dll", SetLastError = true)]
-        static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+        static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 
         [DllImport("user32.dll", SetLastError = true)]
         static extern bool PostMessage(IntPtr hWnd, int msg, int wParam, int lParam);
@@ -65,78 +88,69 @@ namespace SalsaNOW
         delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         const int WM_CLOSE = 0x0010;
+        const int SW_HIDE  = 0;
+        const int SW_SHOW  = 5;
 
-        const int SW_HIDE = 0;
-        const int SW_SHOW = 5;
-
+        // ── Nvidia APIs ──────────────────────────────────────────────────────
         // Credit: https://github.com/mercuryy-1337/
-        // Nvidia APIS
+
         [DllImport("nvapi64.dll", EntryPoint = "nvapi_QueryInterface", CallingConvention = CallingConvention.Cdecl)]
+     
         private static extern IntPtr NvAPI_QueryInterface(uint id);
-
         // important nvapi function ids
-        private const uint ID_NvAPI_Initialize = 0x0150E828;
-        private const uint ID_NvAPI_Unload = 0xD22BDD7E;
-        private const uint ID_NvAPI_DRS_CreateSession = 0x0694D52E;
-        private const uint ID_NvAPI_DRS_DestroySession = 0xDAD9CFF8;
-        private const uint ID_NvAPI_DRS_LoadSettings = 0x375DBD6B;
-        private const uint ID_NvAPI_DRS_SaveSettings = 0xFCBC7E14;
+        private const uint ID_NvAPI_Initialize             = 0x0150E828;
+        private const uint ID_NvAPI_Unload                 = 0xD22BDD7E;
+        private const uint ID_NvAPI_DRS_CreateSession      = 0x0694D52E;
+        private const uint ID_NvAPI_DRS_DestroySession     = 0xDAD9CFF8;
+        private const uint ID_NvAPI_DRS_LoadSettings       = 0x375DBD6B;
+        private const uint ID_NvAPI_DRS_SaveSettings       = 0xFCBC7E14;
         private const uint ID_NvAPI_DRS_RestoreAllDefaults = 0x5927B094;
-
-        // status code sanity check
+        // sanity check
         private const int NVAPI_OK = 0;
 
         //Delegate signatures matching the NVAPI Cdecl calling convention
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int Del_NvAPI_Initialize();
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int Del_NvAPI_Unload();
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int Del_NvAPI_DRS_CreateSession(out IntPtr hSession);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int Del_NvAPI_DRS_DestroySession(IntPtr hSession);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int Del_NvAPI_DRS_LoadSettings(IntPtr hSession);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int Del_NvAPI_DRS_SaveSettings(IntPtr hSession);
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int Del_NvAPI_DRS_RestoreAllDefaults(IntPtr hSession);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_Initialize();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_Unload();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_DRS_CreateSession(out IntPtr hSession);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_DRS_DestroySession(IntPtr hSession);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_DRS_LoadSettings(IntPtr hSession);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_DRS_SaveSettings(IntPtr hSession);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int Del_NvAPI_DRS_RestoreAllDefaults(IntPtr hSession);
 
         private static T GetDelegate<T>(uint id) where T : Delegate
         {
             IntPtr ptr = NvAPI_QueryInterface(id);
             if (ptr == IntPtr.Zero)
-                //this should obviously work in GFN but adding this just in case Nvidia makes a stupid patch in the future but shouldn't be possible without breaking games and requiring them to run as Xen
+                // Should always work in GFN | added as guard against future Nvidia patches
                 throw new EntryPointNotFoundException(
                     $"NVAPI function 0x{id:X8} could not be resolved. " +
                     "Ensure an NVIDIA GPU driver is installed.");
             return Marshal.GetDelegateForFunctionPointer<T>(ptr);
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // ENTRY POINT
+        // ════════════════════════════════════════════════════════════════════
+
         static async Task Main(string[] args)
         {
             Console.Title = "SalsaNOW V1.6.3 - by dpadGuy";
 
+            // First EnableRTX – restore NVAPI defaults before anything touches Steam
             EnableRTX();
 
-            // Parse command-line arguments for custom apps JSON
+            // Parse command-line args for optional custom apps JSON path
             for (int i = 0; i < args.Length; i++)
             {
                 if ((args[i] == "--apps-json" || args[i] == "-a") && i + 1 < args.Length)
                 {
                     customAppsJsonPath = args[i + 1];
                     Console.WriteLine($"[+] Custom apps JSON path set: {customAppsJsonPath}");
-                    i++; // Skip the next argument since it's the path
+                    i++;
                 }
             }
 
-            // Making sure no SSL/TLS issues occur
+            // SSL/TLS issue bypass
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
             ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, errors) => true;
 
@@ -150,6 +164,7 @@ namespace SalsaNOW
             await AppsInstallSilent();
             await SteamServerShutdown();
 
+            // Second EnableRTX – honestly just left it in here cause IDK if Steam Server shutdown can alter NVAPI driver profiles in any way (it shouldnt lol)
             EnableRTX();
 
             // Hide console window
@@ -164,32 +179,39 @@ namespace SalsaNOW
             await Task.Delay(Timeout.Infinite);
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // STARTUP
+        // ════════════════════════════════════════════════════════════════════
+
         static async Task Startup()
         {
-            string jsonUrl = "https://salsanowfiles.work/jsons/directory.json";
+            const string jsonUrl = "https://salsanowfiles.work/jsons/directory.json";
 
             try
             {
                 if (!Directory.Exists("C:\\Asgard"))
                 {
                     Console.WriteLine("[!] SalsaNOW detected the host as not being a GeForce NOW environment. Exiting...");
-                    Thread.Sleep(5000);
+                    await Task.Delay(5000);
                     Environment.Exit(0);
                 }
 
-                using (WebClient webClient = new WebClient())
+                using (var webClient = new WebClient())
                 {
                     string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                    List<SavePath> directory = JsonConvert.DeserializeObject<List<SavePath>>(json);
+                    var directory = JsonConvert.DeserializeObject<List<SavePath>>(json);
                     var dir = directory[0];
 
                     globalDirectory = dir.directoryCreate;
                     Directory.CreateDirectory(dir.directoryCreate);
                     Console.WriteLine($"[!] Main directory created {dir.directoryCreate}");
 
-                    if (!System.IO.File.Exists($"{globalDirectory}\\SalsaNOWConfig.ini"))
+                    string configPath = Path.Combine(globalDirectory, "SalsaNOWConfig.ini");
+                    if (!File.Exists(configPath))
                     {
-                        await webClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/jsons/SalsaNOWConfig.ini"), $"{globalDirectory}\\SalsaNOWConfig.ini");
+                        await webClient.DownloadFileTaskAsync(
+                            new Uri("https://salsanowfiles.work/jsons/SalsaNOWConfig.ini"),
+                            configPath);
                     }
                 }
             }
@@ -200,28 +222,34 @@ namespace SalsaNOW
                 Environment.Exit(0);
             }
         }
+
+        // ════════════════════════════════════════════════════════════════════
+        // APPS INSTALL
+        // ════════════════════════════════════════════════════════════════════
+
         static async Task AppsInstall()
         {
-            string jsonUrl = "https://salsanowfiles.work/jsons/apps.json";
-            string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
+            const string jsonUrl = "https://salsanowfiles.work/jsons/apps.json";
 
             try
             {
-                var salsaNowIniOpen = System.IO.File.ReadAllLines($"{globalDirectory}\\SalsaNOWConfig.ini");
+                var iniLines = File.ReadAllLines(Path.Combine(globalDirectory, "SalsaNOWConfig.ini"));
 
-                // Load built-in apps from remote JSON
-                WebClient wc = new WebClient();
-                string json = await wc.DownloadStringTaskAsync(jsonUrl);
-                List<Apps> apps = JsonConvert.DeserializeObject<List<Apps>>(json);
+                List<Apps> apps;
+                using (var wc = new WebClient())
+                {
+                    string json = await wc.DownloadStringTaskAsync(jsonUrl);
+                    apps = JsonConvert.DeserializeObject<List<Apps>>(json);
+                }
 
-                // Load custom apps from local JSON if provided via --apps-json argument
-                if (!string.IsNullOrEmpty(customAppsJsonPath) && System.IO.File.Exists(customAppsJsonPath))
+                // Merge optional local custom apps JSON
+                if (!string.IsNullOrEmpty(customAppsJsonPath) && File.Exists(customAppsJsonPath))
                 {
                     try
                     {
-                        string customJson = System.IO.File.ReadAllText(customAppsJsonPath);
-                        List<Apps> customApps = JsonConvert.DeserializeObject<List<Apps>>(customJson);
-                        if (customApps != null && customApps.Count > 0)
+                        var customApps = JsonConvert.DeserializeObject<List<Apps>>(
+                            File.ReadAllText(customAppsJsonPath));
+                        if (customApps?.Count > 0)
                         {
                             apps.AddRange(customApps);
                             Console.WriteLine($"[+] Loaded {customApps.Count} custom app(s) from {customAppsJsonPath}");
@@ -237,103 +265,67 @@ namespace SalsaNOW
                     Console.WriteLine($"[!] Custom apps JSON file not found: {customAppsJsonPath}");
                 }
 
+                // Install all apps in parallel; each task owns and disposes its own WebClient
                 var tasks = apps.Select(app => Task.Run(async () =>
                 {
-                    WebClient webClient = new WebClient(); // new instance per app
-
-                    string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + $"\\{app.name}.lnk";
-                    string zipFile = Path.Combine(globalDirectory, app.name);
-                    string appExePath = Path.Combine(globalDirectory, app.exeName);
-                    string appZipPath = Path.Combine(globalDirectory, app.name, app.exeName);
-                    string backupShortcutsDir = Path.Combine(globalDirectory, "Backup Shortcuts");
-                    string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
-
-                    if (!Directory.Exists(zipFile))
+                    using (var webClient = new WebClient())
                     {
-                        if (app.fileExtension == "zip")
+                        string desktopLnk   = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), $"{app.name}.lnk");
+                        string appFolder    = Path.Combine(globalDirectory, app.name);
+                        string appExePath   = Path.Combine(globalDirectory, app.exeName);
+                        string appZipExe    = Path.Combine(globalDirectory, app.name, app.exeName);
+                        string backupDir    = Path.Combine(globalDirectory, "Backup Shortcuts");
+                        string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
+
+                        bool shortcutAlreadySaved =
+                            File.Exists(Path.Combine(backupDir,    $"{app.name}.lnk")) ||
+                            File.Exists(Path.Combine(shortcutsDir, $"{app.name}.lnk"));
+
+                        if (!Directory.Exists(appFolder))
                         {
                             Console.WriteLine("[+] Installing " + app.name);
 
-                            await webClient.DownloadFileTaskAsync(new Uri(app.url), $"{zipFile}.zip");
-
-                            ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
-
-                            if (!System.IO.File.Exists($"{backupShortcutsDir}\\{app.name}.lnk"))
+                            if (app.fileExtension == "zip")
                             {
-                                if (!System.IO.File.Exists($"{shortcutsDir}\\{app.name}.lnk"))
-                                {
-                                    WshShell shell = new WshShell();
-                                    IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                                    shortcut.TargetPath = appZipPath;
-                                    shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(appZipPath);
+                                string zipPath = $"{appFolder}.zip";
+                                await webClient.DownloadFileTaskAsync(new Uri(app.url), zipPath);
+                                ZipFile.ExtractToDirectory(zipPath, appFolder);
+                                File.Delete(zipPath);
 
-                                    shortcut.Save();
-                                }
+                                if (!shortcutAlreadySaved)
+                                    CreateShortcut(desktopLnk, appZipExe, Path.GetDirectoryName(appZipExe));
+
+                                if (app.run == "true")
+                                    Process.Start(appZipExe);
                             }
-
-                            System.IO.File.Delete($"{zipFile}.zip");
-
-                            if (app.run == "true")
+                            else if (app.fileExtension == "exe")
                             {
-                                Process.Start(appZipPath);
-                            }
-                        }
+                                await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
 
-                        if (app.fileExtension == "exe")
-                        {
-                            Console.WriteLine("[+] Installing " + app.name);
+                                if (!shortcutAlreadySaved)
+                                    CreateShortcut(desktopLnk, appExePath, Path.GetDirectoryName(globalDirectory));
 
-                            await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
-
-                            if (!System.IO.File.Exists($"{backupShortcutsDir}\\{app.name}.lnk"))
-                            {
-                                if (!System.IO.File.Exists($"{shortcutsDir}\\{app.name}.lnk"))
-                                {
-                                    WshShell shell = new WshShell();
-                                    IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                                    shortcut.TargetPath = appExePath;
-                                    shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
-
-                                    shortcut.Save();
-                                }
-                            }
-
-                            if (app.run == "true")
-                            {
-                                Process.Start(appExePath);
+                                if (app.run == "true")
+                                    Process.Start(appExePath);
                             }
                         }
-                    }
-                    else
-                    {
-                        Console.WriteLine("[!] " + app.name + " Already exists.");
-
-                        if (app.fileExtension == "zip")
+                        else
                         {
-                            if (!System.IO.File.Exists($"{backupShortcutsDir}\\{app.name}.lnk"))
-                            {
-                                if (!System.IO.File.Exists($"{shortcutsDir}\\{app.name}.lnk"))
-                                {
-                                    WshShell shell = new WshShell();
-                                    IWshShortcut shortcut = (IWshShortcut)shell.CreateShortcut(desktopPath);
-                                    shortcut.TargetPath = appZipPath;
-                                    shortcut.WorkingDirectory = System.IO.Path.GetDirectoryName(globalDirectory);
+                            Console.WriteLine("[!] " + app.name + " Already exists.");
 
-                                    shortcut.Save();
-                                }
-                            }
-
-                            if (app.run == "true")
+                            if (app.fileExtension == "zip")
                             {
-                                Process.Start(appZipPath);
+                                if (!shortcutAlreadySaved)
+                                    CreateShortcut(desktopLnk, appZipExe, Path.GetDirectoryName(globalDirectory));
+
+                                if (app.run == "true")
+                                    Process.Start(appZipExe);
                             }
                         }
                     }
                 })).ToList();
 
                 await Task.WhenAll(tasks);
-
-                return;
             }
             catch (Exception ex)
             {
@@ -342,42 +334,41 @@ namespace SalsaNOW
                 Environment.Exit(0);
             }
         }
-        static async Task AppsInstallSilent() // Meant for deploying programs that run in background only, no user interaction.
+
+        // ════════════════════════════════════════════════════════════════════
+        // SILENT APPS INSTALL
+        // ════════════════════════════════════════════════════════════════════
+        // Background-only programs
+        static async Task AppsInstallSilent()
         {
-            string jsonUrl = "https://salsanowfiles.work/jsons/silentapps.json";
-            string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
-            string silentAppsPath = $"{globalDirectory}\\SilentApps";
+            const string jsonUrl  = "https://salsanowfiles.work/jsons/silentapps.json";
+            string silentAppsPath = Path.Combine(globalDirectory, "SilentApps");
 
             try
             {
-                var salsaNowIniOpen = System.IO.File.ReadAllLines($"{globalDirectory}\\SalsaNOWConfig.ini");
-
                 Directory.CreateDirectory(silentAppsPath);
 
-                // Load built-in apps from remote JSON
-                WebClient wc = new WebClient();
-                string json = await wc.DownloadStringTaskAsync(jsonUrl);
-                List<SilentApps> apps = JsonConvert.DeserializeObject<List<SilentApps>>(json);
+                List<SilentApps> apps;
+                using (var wc = new WebClient())
+                {
+                    string json = await wc.DownloadStringTaskAsync(jsonUrl);
+                    apps = JsonConvert.DeserializeObject<List<SilentApps>>(json);
+                }
 
-                // Build allowed folder list: include all archive apps
+                // Build allowed sets so we can clean up stale files from previous runs
                 var allowedFolders = new HashSet<string>(
-                    apps.Where(a => a.archive == "true").Select(a => a.name).ToList(),
-                    StringComparer.OrdinalIgnoreCase
-                );
+                    apps.Where(a => a.archive == "true").Select(a => a.name),
+                    StringComparer.OrdinalIgnoreCase);
 
-                // Build allowed file list: include .exe and .bat files
                 var allowedFiles = new HashSet<string>(
                     apps.Where(a => a.fileExtension == "exe" || a.fileExtension == "bat")
-                        .Select(a => a.fileName + "." + a.fileExtension)
-                        .ToList(),
-                    StringComparer.OrdinalIgnoreCase
-                );
+                        .Select(a => $"{a.fileName}.{a.fileExtension}"),
+                    StringComparer.OrdinalIgnoreCase);
 
-                // Remove folders not in JSON
+                // Remove FOLDERS no longer listed in remote JSON
                 foreach (var dir in Directory.GetDirectories(silentAppsPath))
                 {
                     string dirName = Path.GetFileName(dir);
-
                     if (!allowedFolders.Contains(dirName))
                     {
                         try
@@ -392,17 +383,16 @@ namespace SalsaNOW
                     }
                 }
 
-                // Remove files not in JSON
+                // Remove FILES no longer listed in remote JSON
                 foreach (var file in Directory.GetFiles(silentAppsPath))
                 {
                     string fileName = Path.GetFileName(file);
-
                     if (!allowedFiles.Contains(fileName))
                     {
                         try
                         {
                             Console.WriteLine($"[-] Removing unused file: {fileName}");
-                            System.IO.File.Delete(file);
+                            File.Delete(file);
                         }
                         catch (Exception ex)
                         {
@@ -413,71 +403,47 @@ namespace SalsaNOW
 
                 var tasks = apps.Select(app => Task.Run(async () =>
                 {
-                    WebClient webClient = new WebClient(); // new instance per app
-
-                    string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop) + $"\\{app.name}.lnk";
-                    string zipFile = Path.Combine(silentAppsPath, app.name);
-                    string appPath = Path.Combine(silentAppsPath, app.fileName + "." + app.fileExtension);
-
-                    string appZipPath = Path.Combine(silentAppsPath, app.name, app.fileName + "." + app.fileExtension);
-
-                    if (app.archive == "true")
+                    using (var webClient = new WebClient())
                     {
-                        if (System.IO.File.Exists(appZipPath))
+                        string appFolder  = Path.Combine(silentAppsPath, app.name);
+                        string appPath    = Path.Combine(silentAppsPath, $"{app.fileName}.{app.fileExtension}");
+                        string appZipPath = Path.Combine(silentAppsPath, app.name, $"{app.fileName}.{app.fileExtension}");
+
+                        if (app.archive == "true")
                         {
+                            if (File.Exists(appZipPath))
+                                return; // Already installed
+
+                            Console.WriteLine("[+] Installing " + app.name);
+                            string zipPath = $"{appFolder}.zip";
+                            await webClient.DownloadFileTaskAsync(new Uri(app.url), zipPath);
+                            ZipFile.ExtractToDirectory(zipPath, appFolder);
+                            File.Delete(zipPath);
+
+                            if (app.run == "true")
+                                Process.Start(appZipPath);
+
                             return;
                         }
 
-                        Console.WriteLine("[+] Installing " + app.name);
-
-                        await webClient.DownloadFileTaskAsync(new Uri(app.url), $"{zipFile}.zip");
-
-                        ZipFile.ExtractToDirectory($"{zipFile}.zip", zipFile);
-
-                        System.IO.File.Delete($"{zipFile}.zip");
-
-                        if (app.run == "true")
+                        if (app.fileExtension == "exe" || app.fileExtension == "bat")
                         {
-                            Process.Start(appZipPath);
-                        }
+                            Console.WriteLine("[+] Installing " + app.name);
+                            await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
 
-                        return;
-                    }
-
-                    if (app.fileExtension == "exe")
-                    {
-                        Console.WriteLine("[+] Installing " + app.name);
-
-                        await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
-
-                        if (app.run == "true")
-                        {
-                            Process.Start(appPath);
-                        }
-                    }
-
-                    if (app.fileExtension == "bat")
-                    {
-                        Console.WriteLine("[+] Installing " + app.name);
-
-                        await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
-
-                        if (app.run == "true")
-                        {
-                            var startInfo = new ProcessStartInfo
+                            if (app.run == "true")
                             {
-                                FileName = appPath,
-                                UseShellExecute = true,
-                            };
-
-                            Process.Start(startInfo);
+                                Process.Start(new ProcessStartInfo
+                                {
+                                    FileName        = appPath,
+                                    UseShellExecute = true,
+                                });
+                            }
                         }
                     }
                 })).ToList();
 
                 await Task.WhenAll(tasks);
-
-                return;
             }
             catch (Exception ex)
             {
@@ -487,248 +453,197 @@ namespace SalsaNOW
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // DESKTOP INSTALL (WinXShell / seelenui)
+        // ════════════════════════════════════════════════════════════════════
+
         static async Task DesktopInstall()
         {
-            string jsonUrl = "https://salsanowfiles.work/jsons/desktop.json";
-            string salsaNowIniPath = $"{globalDirectory}\\SalsaNOWConfig.ini";
+            const string jsonUrl = "https://salsanowfiles.work/jsons/desktop.json";
 
-            ProcessStartInfo psi1 = new ProcessStartInfo("cmd.exe", "/c reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\" /v AppsUseLightTheme /t REG_DWORD /d 0 /f")
+            // Force dark theme via registry
+            Process.Start(new ProcessStartInfo("cmd.exe",
+                "/c reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\" " +
+                "/v AppsUseLightTheme /t REG_DWORD /d 0 /f")
             {
                 UseShellExecute = true,
-            };
-
-            Process.Start(psi1);
+            });
 
             try
             {
-                string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                string desktopPath  = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
                 string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
-                var salsaNowIniOpen = System.IO.File.ReadAllLines($"{globalDirectory}\\SalsaNOWConfig.ini");
+                var iniLines        = File.ReadAllLines(Path.Combine(globalDirectory, "SalsaNOWConfig.ini"));
 
-                using (WebClient webClient = new WebClient())
+                // Pre-compute ini flags once instead of re-checking inside nested loops
+                bool skipSeelenExecution = iniLines.Any(l => l.Contains("SkipSeelenUiExecution = \"0\""));
+                bool bingWallpaperEnabled = iniLines.Any(l => l.Contains("BingPhotoOfTheDayWallpaper = \"1\""));
+
+                using (var webClient = new WebClient())
                 {
                     string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                    List<DesktopInfo> desktopInfo = JsonConvert.DeserializeObject<List<DesktopInfo>>(json);
+                    var desktopInfo = JsonConvert.DeserializeObject<List<DesktopInfo>>(json);
 
+                    // Kill GFN's own explorer shell if it's running
                     IntPtr hWndSeelen = FindWindow(null, "CustomExplorer");
-
-                    // Check if the window handle is valid
                     if (hWndSeelen != IntPtr.Zero)
-                    {
                         PostMessage(hWndSeelen, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                    }
 
-                    foreach (var desktops in desktopInfo)
+                    foreach (var desktop in desktopInfo)
                     {
-                        string appDir = Path.Combine(globalDirectory, desktops.name);
-                        string zipFile = Path.Combine(globalDirectory, desktops.name + ".zip");
-                        string exePath = Path.Combine(appDir, desktops.exeName);
-                        string taskbarFixerPath = string.IsNullOrEmpty(desktops.taskbarFixer) ? "" : Path.Combine(appDir, desktops.taskbarFixer);
+                        string appDir      = Path.Combine(globalDirectory, desktop.name);
+                        string zipFile     = Path.Combine(globalDirectory, desktop.name + ".zip");
+                        string exePath     = Path.Combine(appDir, desktop.exeName);
                         string roamingPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                        string seelenCfgDir = Path.Combine(roamingPath, "com.seelen.seelen-ui");
 
                         if (!Directory.Exists(appDir))
                         {
-                            await webClient.DownloadFileTaskAsync(new Uri(desktops.url), zipFile);
-
+                            // ── Fresh install ─────────────────────────────────
+                            await webClient.DownloadFileTaskAsync(new Uri(desktop.url), zipFile);
                             ZipFile.ExtractToDirectory(zipFile, appDir);
-                            System.IO.File.Delete(zipFile);
+                            File.Delete(zipFile); // Deleted once, original had a duplicate delete
 
-                            if (desktops.name.Contains("WinXShell"))
+                            if (desktop.name.Contains("WinXShell"))
                             {
                                 Process.Start(exePath);
-
-                                System.IO.File.Delete(zipFile);
-
-                                Thread.Sleep(500);
-
-                                // Source - https://stackoverflow.com/a
-                                // Posted by Sergey Vyacheslavovich Brunov, modified by community. See post 'Timeline' for change history
-                                // Retrieved 2025-11-19, License - CC BY-SA 3.0
-
-                                while (true)
-                                {
-                                    IntPtr windowPtr = FindWindowByCaption(IntPtr.Zero, "WinXShell");
-                                    if (windowPtr == IntPtr.Zero)
-                                    {
-                                        // Do nothing, retry
-                                    }
-                                    else
-                                    {
-                                        SendMessage(windowPtr, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                                        Console.WriteLine("[+] WinXShell error message has been closed.");
-                                        break;
-                                    }
-                                }
+                                await Task.Delay(500);
+                                // Source: https://stackoverflow.com/a
+                                // Posted by Sergey Vyacheslavovich Brunov, modified by community.
+                                // Retrieved 2025-11-19, License – CC BY-SA 3.0
+                                await CloseWindowWithTimeoutAsync("WinXShell", timeoutMs: 15_000);
                             }
 
-                            if (desktops.name.Contains("seelenui"))
+                            if (desktop.name.Contains("seelenui"))
                             {
-                                foreach (var line in salsaNowIniOpen)
+                                // Download and extract config once, original looped over
+                                // every ini line and re-downloaded on each iteration regardless of condition.
+                                using (var cfgClient = new WebClient())
                                 {
-                                    WebClient webClientConfig = new WebClient();
-                                    await webClientConfig.DownloadFileTaskAsync(new Uri(desktops.zipConfig), zipFile);
-
+                                    await cfgClient.DownloadFileTaskAsync(new Uri(desktop.zipConfig), zipFile);
                                     try
                                     {
-                                        ZipFile.ExtractToDirectory(zipFile, $"{roamingPath}\\com.seelen.seelen-ui");
-                                        System.IO.File.Delete(zipFile);
+                                        ZipFile.ExtractToDirectory(zipFile, seelenCfgDir);
+                                        File.Delete(zipFile);
                                     }
-                                    catch
-                                    {
-                                    }
-
-                                    if (line.Contains("SkipSeelenUiExecution = \"0\""))
-                                    {
-                                        Process.Start(exePath);
-                                    }
+                                    catch { /* already partially extracted */ }
                                 }
+
+                                if (skipSeelenExecution)
+                                    Process.Start(exePath);
                             }
                         }
                         else
                         {
-                            Console.WriteLine("[!] " + desktops.name + " Already exists.");
+                            // ── Already installed ─────────────────────────────
+                            Console.WriteLine("[!] " + desktop.name + " Already exists.");
 
-                            if (desktops.name.Contains("WinXShell"))
+                            if (desktop.name.Contains("WinXShell"))
                             {
-                                // Bing Photo Of The Day Wallpaper Feature
-                                foreach (var line in salsaNowIniOpen)
+                                if (bingWallpaperEnabled)
+                                    await PhotoOfTheDayBingWallpaper(appDir);
+
+                                Process.Start(exePath);
+                                // Source: https://stackoverflow.com/a
+                                // Posted by Sergey Vyacheslavovich Brunov, modified by community.
+                                // Retrieved 2025-11-19, License – CC BY-SA 3.0
+                                await CloseWindowWithTimeoutAsync("WinXShell", timeoutMs: 15_000);
+                            }
+
+                            if (desktop.name.Contains("seelenui") && skipSeelenExecution)
+                            {
+                                // Wipe stale config and re-apply fresh from remote
+                                if (Directory.Exists(seelenCfgDir))
+                                    Directory.Delete(seelenCfgDir, true);
+
+                                using (var cfgClient = new WebClient())
                                 {
-                                    if (line.Contains("BingPhotoOfTheDayWallpaper = \"1\""))
+                                    await cfgClient.DownloadFileTaskAsync(new Uri(desktop.zipConfig), zipFile);
+                                    try
                                     {
-                                        await PhotoOfTheDayBingWallpaper(appDir);
+                                        ZipFile.ExtractToDirectory(zipFile, seelenCfgDir);
+                                        File.Delete(zipFile);
                                     }
+                                    catch { /* already partially extracted */ }
                                 }
 
                                 Process.Start(exePath);
-
-                                // Source - https://stackoverflow.com/a
-                                // Posted by Sergey Vyacheslavovich Brunov, modified by community. See post 'Timeline' for change history
-                                // Retrieved 2025-11-19, License - CC BY-SA 3.0
-
-                                while (true)
-                                {
-                                    IntPtr windowPtr = FindWindowByCaption(IntPtr.Zero, "WinXShell");
-                                    if (windowPtr == IntPtr.Zero)
-                                    {
-                                        // Do nothing, retry
-                                    }
-                                    else
-                                    {
-                                        SendMessage(windowPtr, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                                        Console.WriteLine("[+] WinXShell error message has been closed.");
-                                        break;
-                                    }
-                                }
-                            }
-
-                            if (desktops.name.Contains("seelenui"))
-                            {
-                                foreach (var ln in salsaNowIniOpen)
-                                {
-                                    if (ln.Contains("SkipSeelenUiExecution = \"0\""))
-                                    {
-                                        Directory.Delete(roamingPath + "\\com.seelen.seelen-ui", true);
-
-                                        await new WebClient().DownloadFileTaskAsync(new Uri(desktops.zipConfig), zipFile);
-
-                                        try
-                                        {
-                                            ZipFile.ExtractToDirectory(zipFile, roamingPath + "\\com.seelen.seelen-ui");
-                                            System.IO.File.Delete(zipFile);
-                                        }
-                                        catch
-                                        {
-                                        }
-
-                                        Process.Start(exePath);
-                                        break;
-                                    }
-                                }
                             }
                         }
                     }
                 }
 
-                Thread.Sleep(6000);
+                // Wait for seelenui to complete its first-run startup sequence
+                await Task.Delay(6000);
 
-                foreach (var ln in salsaNowIniOpen)
+                if (skipSeelenExecution)
                 {
-                    if (ln.Contains("SkipSeelenUiExecution = \"0\""))
+                    var stopwatch = Stopwatch.StartNew();
+                    const int seelenTimeoutMs = 7000;
+                    bool seelenWallCheckedOnce = false;
+
+                    while (true)
                     {
-                        Stopwatch stopwatch = Stopwatch.StartNew();
-                        int timeoutMs = 7000;
+                        bool settingsFound = false;
 
-                        bool seelenWallCheckedOnce = false;
-
-                        while (true)
+                        // --- SETTINGS WINDOW CHECK (looped until found or timeout) ---
+                        EnumWindows((hWnd, lParam) =>
                         {
-                            bool settingsFound = false;
+                            EnumChildWindows(hWnd, (child, lp) =>
+                            {
+                                var sb = new StringBuilder(512);
+                                GetWindowText(child, sb, sb.Capacity);
+                                if (sb.ToString().Equals("tauri.localhost/settings/index.html",
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                                    settingsFound = true;
+                                    Console.WriteLine("[+] Settings window closed.");
+                                    return false;
+                                }
+                                return true;
+                            }, IntPtr.Zero);
+                            return !settingsFound;
+                        }, IntPtr.Zero);
 
-                            // --- SETTINGS WINDOW CHECK (looped) ---
+                        await Task.Delay(500);
+
+                        // --- SEELEN_WALL CHECK (only once) ---
+                        if (!seelenWallCheckedOnce)
+                        {
+                            seelenWallCheckedOnce = true;
+                            bool seelenWallFound  = false;
+
                             EnumWindows((hWnd, lParam) =>
                             {
                                 EnumChildWindows(hWnd, (child, lp) =>
                                 {
                                     var sb = new StringBuilder(512);
                                     GetWindowText(child, sb, sb.Capacity);
-
-                                    if (sb.ToString().Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
+                                    if (sb.ToString().Equals("tauri.localhost/seelen_wall/index.html",
+                                            StringComparison.OrdinalIgnoreCase))
                                     {
-                                        PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                                        settingsFound = true;
-                                        Console.WriteLine("[+] Settings window closed.");
+                                        SendMessage(child, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                                        seelenWallFound = true;
+                                        Console.WriteLine("[+] Seelen Wall window closed.");
                                         return false;
                                     }
                                     return true;
                                 }, IntPtr.Zero);
-
-                                return !settingsFound;
+                                return !seelenWallFound;
                             }, IntPtr.Zero);
-
-                            Thread.Sleep(500);
-
-                            // --- SEELEN_WALL CHECK (only ONCE) ---
-                            if (!seelenWallCheckedOnce)
-                            {
-                                seelenWallCheckedOnce = true; // prevent future checks
-
-                                bool seelenWallFound = false;
-
-                                EnumWindows((hWnd, lParam) =>
-                                {
-                                    EnumChildWindows(hWnd, (child, lp) =>
-                                    {
-                                        var sb = new StringBuilder(512);
-                                        GetWindowText(child, sb, sb.Capacity);
-
-                                        if (sb.ToString().Equals("tauri.localhost/seelen_wall/index.html", StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            SendMessage(child, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                                            seelenWallFound = true;
-                                            Console.WriteLine("[+] Seelen Wall window closed.");
-                                            return false;
-                                        }
-                                        return true;
-                                    }, IntPtr.Zero);
-
-                                    return !seelenWallFound;
-                                }, IntPtr.Zero);
-                            }
-
-
-                            // If settings was found, exit loop
-                            if (settingsFound)
-                                return;
-
-                            // Timeout
-                            if (stopwatch.ElapsedMilliseconds > timeoutMs)
-                            {
-                                Console.WriteLine("[!] Seelen UI failed to start, using WinXShell.");
-                                return;
-                            }
-
-                            Thread.Sleep(500);
                         }
+
+                        if (settingsFound)
+                            return;
+
+                        if (stopwatch.ElapsedMilliseconds > seelenTimeoutMs)
+                        {
+                            Console.WriteLine("[!] Seelen UI failed to start, using WinXShell.");
+                            return;
+                        }
+
+                        await Task.Delay(500);
                     }
                 }
             }
@@ -740,22 +655,24 @@ namespace SalsaNOW
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // STEAM SERVER SHUTDOWN
+        // ════════════════════════════════════════════════════════════════════
+
         static async Task SteamServerShutdown()
         {
             /* Steam Server (NVIDIA Made Proxy Interceptor for Steam) "127.10.0.231:9753"
-             * Steam Server communicates with Steam by proxy and intercepts function calls from Steam by
-             * making them not happen or replaces them with special made ones to do something else.
-             * Shutting the server down by POST request will lead to all opted-in games on
-             * GeForce NOW to show up on Steam.
+             * Communicates with Steam via proxy, intercepting function calls by either
+             * suppressing them or replacing them with custom implementations :).
+             * Sending POST /shutdown causes all opted-in GFN games to appear in Steam.
              */
 
             try
             {
-                string dummyJsonLink = "https://salsanowfiles.work/jsons/kaka.json";
-                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                string usgMaskPath = Program.globalDirectory + "\\conhost.exe";
+                const string dummyJsonLink = "https://salsanowfiles.work/jsons/kaka.json";
+                string usgMaskPath = Path.Combine(globalDirectory, "conhost.exe");
 
-                using (WebClient webClient = new WebClient())
+                using (var webClient = new WebClient())
                 {
                     try
                     {
@@ -767,45 +684,46 @@ namespace SalsaNOW
                         Console.WriteLine("[!] Steam Server is not running.");
                     }
 
-                    await webClient.DownloadFileTaskAsync(new Uri(dummyJsonLink), $"{globalDirectory}\\kaka.json");
+                    await webClient.DownloadFileTaskAsync(
+                        new Uri(dummyJsonLink),
+                        Path.Combine(globalDirectory, "kaka.json"));
                 }
 
-                var startInfo = new ProcessStartInfo
+                Process.Start(new ProcessStartInfo
                 {
-                    FileName = @"C:\Program Files (x86)\Steam\lockdown\server\server.exe",
-                    Arguments = $"{globalDirectory}\\kaka.json",
-                    CreateNoWindow = true,
+                    FileName        = @"C:\Program Files (x86)\Steam\lockdown\server\server.exe",
+                    Arguments       = Path.Combine(globalDirectory, "kaka.json"),
+                    CreateNoWindow  = true,
                     UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
+                    WindowStyle     = ProcessWindowStyle.Hidden,
+                });
 
-                Process.Start(startInfo);
-
-                Directory.Delete("C:\\Program Files (x86)\\Steam\\appcache", true);
+                Directory.Delete(@"C:\Program Files (x86)\Steam\appcache", true);
 
                 // Steam USG Part (Temporary code, will get removed once a patch has been found for this USG)
                 using (var webClient = new WebClient())
                 {
-                    await webClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/bleh.exe"), usgMaskPath);
+                    await webClient.DownloadFileTaskAsync(
+                        new Uri("https://salsanowfiles.work/USG/bleh.exe"),
+                        usgMaskPath);
                 }
 
+                // Process.Start can return null if CreateProcess fails
                 var usgProcess = Process.Start(usgMaskPath);
-
-                while (!usgProcess.HasExited)
+                if (usgProcess != null)
                 {
-                    await Task.Delay(1000);
+                    while (!usgProcess.HasExited)
+                        await Task.Delay(1000);
                 }
 
-                // small grace period for OS to release file
+                // Small grace period for OS to release the file handle
                 await Task.Delay(200);
 
-                System.IO.File.Delete(usgMaskPath);
+                if (File.Exists(usgMaskPath))
+                    File.Delete(usgMaskPath);
 
                 //foreach (var process in Process.GetProcessesByName("steam"))
-                //{
                 //    process.Kill();
-                //}
-
                 //Process.Start("steam://open/library");
             }
             catch (Exception ex)
@@ -816,173 +734,167 @@ namespace SalsaNOW
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // SHORTCUTS SAVING  (background loop)
+        // ════════════════════════════════════════════════════════════════════
+
         static void ShortcutsSaving()
         {
-            string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            string startMenuPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) + "\\Microsoft\\Windows\\Start Menu\\Programs";
+            string desktopPath  = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
             string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
-            string backupShortcutsDir = Path.Combine(globalDirectory, "Backup Shortcuts");
+            string backupDir    = Path.Combine(globalDirectory, "Backup Shortcuts");
 
             Directory.CreateDirectory(shortcutsDir);
-            Directory.CreateDirectory(backupShortcutsDir);
+            Directory.CreateDirectory(backupDir);
 
-            // Copy all files from the shortcuts directory to desktop
+            // On start: push saved shortcuts back to desktop
             try
             {
-                System.IO.File.Delete($"{desktopPath}\\desktop.ini");
-
-                var allFiles = Directory.GetFiles(shortcutsDir, "*.lnk*", SearchOption.AllDirectories);
-
-                foreach (string shortcut in allFiles)
-                {
-                    System.IO.File.Copy(shortcut, shortcut.Replace(shortcutsDir, desktopPath), true);
-                }
+                File.Delete(Path.Combine(desktopPath, "desktop.ini"));
+                foreach (string shortcut in Directory.GetFiles(shortcutsDir, "*.lnk*", SearchOption.AllDirectories))
+                    File.Copy(shortcut, shortcut.Replace(shortcutsDir, desktopPath), overwrite: true);
             }
             catch { }
 
-            // Copy all files from desktop to the shortcuts directory
             try
             {
-                System.IO.File.Delete($"{desktopPath}\\desktop.ini");
+                File.Delete(Path.Combine(desktopPath, "desktop.ini"));
 
                 while (true)
                 {
                     Thread.Sleep(5000);
 
+                    // Restore PeaZip | try Shortcuts first, Backup Shortcuts as fallback
                     try
                     {
-                        if (!System.IO.File.Exists($"{desktopPath}\\PeaZip File Explorer Archiver.lnk"))
+                        if (!File.Exists(Path.Combine(desktopPath, "PeaZip File Explorer Archiver.lnk")))
                         {
-                            System.IO.File.Copy($"{globalDirectory}\\Shortcuts\\PeaZip File Explorer Archiver.lnk", $"{desktopPath}\\PeaZip File Explorer Archiver.lnk");
-                            MessageBox.Show("PeaZip File Explorer Archiver is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            File.Copy(
+                                Path.Combine(shortcutsDir, "PeaZip File Explorer Archiver.lnk"),
+                                Path.Combine(desktopPath,  "PeaZip File Explorer Archiver.lnk"));
+                            MessageBox.Show(
+                                "PeaZip File Explorer Archiver is a core component in which it cannot be removed.",
+                                "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                     }
                     catch { }
 
                     try
                     {
-                        if (!System.IO.File.Exists($"{desktopPath}\\PeaZip File Explorer Archiver.lnk"))
+                        if (!File.Exists(Path.Combine(desktopPath, "PeaZip File Explorer Archiver.lnk")))
                         {
-                            System.IO.File.Copy($"{globalDirectory}\\Backup Shortcuts\\PeaZip File Explorer Archiver.lnk", $"{desktopPath}\\PeaZip File Explorer Archiver.lnk");
-                            MessageBox.Show("PeaZip File Explorer Archiver is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            File.Copy(
+                                Path.Combine(backupDir,   "PeaZip File Explorer Archiver.lnk"),
+                                Path.Combine(desktopPath, "PeaZip File Explorer Archiver.lnk"));
+                            MessageBox.Show(
+                                "PeaZip File Explorer Archiver is a core component in which it cannot be removed.",
+                                "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        }
+                    }
+                    catch { }
+
+                    // Restore System Informer | same two-step fallback
+                    try
+                    {
+                        if (!File.Exists(Path.Combine(desktopPath, "System Informer.lnk")))
+                        {
+                            File.Copy(
+                                Path.Combine(shortcutsDir, "System Informer.lnk"),
+                                Path.Combine(desktopPath,  "System Informer.lnk"));
+                            MessageBox.Show(
+                                "System Informer is a core component in which it cannot be removed.",
+                                "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                     }
                     catch { }
 
                     try
                     {
-                        if (!System.IO.File.Exists($"{desktopPath}\\System Informer.lnk"))
+                        if (!File.Exists(Path.Combine(desktopPath, "System Informer.lnk")))
                         {
-                            System.IO.File.Copy($"{globalDirectory}\\Shortcuts\\System Informer.lnk", $"{desktopPath}\\System Informer.lnk");
-                            MessageBox.Show("System Informer is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            File.Copy(
+                                Path.Combine(backupDir,   "System Informer.lnk"),
+                                Path.Combine(desktopPath, "System Informer.lnk"));
+                            MessageBox.Show(
+                                "System Informer is a core component in which it cannot be removed.",
+                                "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
                         }
                     }
                     catch { }
 
-                    try
-                    {
-                        if (!System.IO.File.Exists($"{desktopPath}\\System Informer.lnk"))
-                        {
-                            System.IO.File.Copy($"{globalDirectory}\\Backup Shortcuts\\System Informer.lnk", $"{desktopPath}\\System Informer.lnk");
-                            MessageBox.Show("System Informer is a core component in which it cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        }
-                    }
-                    catch { }
-
-                    // Copy shortcuts from Desktop to Shortcuts directory
-                    var lnkFilesDesktop = Directory.EnumerateFiles(desktopPath, "*.lnk", SearchOption.AllDirectories);
+                    // Sync desktop → Shortcuts directory (one-way, no overwrite)
+                    var lnkFilesDesktop = Directory.EnumerateFiles(desktopPath, "*.lnk", SearchOption.AllDirectories)
+                                                   .ToList(); // Materialise before iterating
 
                     foreach (var file in lnkFilesDesktop)
                     {
                         try
                         {
                             string relativePath = file.Substring(desktopPath.Length + 1);
-                            string destPath = Path.Combine(shortcutsDir, relativePath);
-
+                            string destPath     = Path.Combine(shortcutsDir, relativePath);
                             Directory.CreateDirectory(Path.GetDirectoryName(destPath));
-                            System.IO.File.Copy(file, destPath, false);
+                            File.Copy(file, destPath, overwrite: false);
                             Console.WriteLine($"[+] Synced: {relativePath}");
                         }
-                        catch
-                        {
-                        }
+                        catch { }
                     }
 
-                    // Copy shortcuts from Desktop to Start Menu directory
-                    foreach (var file in lnkFilesDesktop)
-                    {
-                        try
-                        {
-                            string relativePath = file.Substring(startMenuPath.Length + 1);
-                            string destPath = Path.Combine(shortcutsDir, relativePath);
+                    // NOTE: Start Menu sync loop removed – original used startMenuPath.Length
+                    // on desktop file paths, causing ArgumentOutOfRangeException on every file.
 
-                            System.IO.File.Copy(file, destPath, false);
-                            Console.WriteLine($"[+] Synced: {relativePath}");
-                        }
-                        catch
-                        {
-                        }
-                    }
-
-                    // Backup missing/renamed shortcuts from desktop and remove them from Shortcuts directory
-                    var lnkFilesBackup = Directory.EnumerateFiles(shortcutsDir, "*.lnk", SearchOption.AllDirectories);
-                    foreach (var backupFile in lnkFilesBackup)
+                    // Backup shortcuts removed from desktop → Backup Shortcuts directory
+                    foreach (var backupFile in Directory.EnumerateFiles(shortcutsDir, "*.lnk", SearchOption.AllDirectories).ToList())
                     {
                         try
                         {
                             string relativePath = backupFile.Substring(shortcutsDir.Length + 1);
                             string originalPath = Path.Combine(desktopPath, relativePath);
-                            string fileName = Path.GetFileName(backupFile);
+                            string fileName     = Path.GetFileName(backupFile);
+                            string backupTarget = Path.Combine(backupDir, fileName);
 
-                            if (!System.IO.File.Exists(originalPath))
+                            if (!File.Exists(originalPath))
                             {
-                                // If file already exists in backup we remove the one from Shortcuts directory, moving cannot be done
-                                // due to the file already existing in the backup location, overwriting is not possible with Move
-                                // overwriting over and over again can break shortcut metadata, we instead just delete the shortcut.
-                                if (System.IO.File.Exists($"{globalDirectory}\\Backup Shortcuts\\{fileName}"))
+                                if (File.Exists(backupTarget))
                                 {
-                                    System.IO.File.Delete(backupFile);
-                                    break;
+                                    // Already in backup – just remove from Shortcuts.
+                                    // Was 'break' in original which exited the whole loop early.
+                                    File.Delete(backupFile);
+                                    continue;
                                 }
 
-                                System.IO.File.Move(backupFile, $"{globalDirectory}\\Backup Shortcuts\\{fileName}");
+                                File.Move(backupFile, backupTarget);
                                 Console.WriteLine($"[-] Backed up missing shortcut: {relativePath}");
                             }
                         }
-                        catch
-                        {
-                        }
+                        catch { }
                     }
                 }
             }
             catch (Exception ex)
             {
-                var handle = GetConsoleWindow();
-                ShowWindow(handle, SW_SHOW);
-
+                ShowConsole();
                 Console.WriteLine(ex.ToString());
                 Console.ReadKey();
                 Environment.Exit(0);
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // TERMINATE GFN EXPLORER SHELL  (background loop)
+        // ════════════════════════════════════════════════════════════════════
+
+        // Source: https://stackoverflow.com/a
+        // Posted by Sergey Vyacheslavovich Brunov, modified by community.
+        // Retrieved 2025-11-19, License – CC BY-SA 3.0
         static void TerminateGFNExplorerShell()
         {
-            // Source - https://stackoverflow.com/a
-            // Posted by Sergey Vyacheslavovich Brunov, modified by community. See post 'Timeline' for change history
-            // Retrieved 2025-11-19, License - CC BY-SA 3.0
-
             while (true)
             {
                 try
                 {
                     Thread.Sleep(500);
                     IntPtr windowPtr = FindWindowByCaption(IntPtr.Zero, "CustomExplorer");
-                    if (windowPtr == IntPtr.Zero)
-                    {
-                        // Do nothing, retry
-                    }
-                    else
+                    if (windowPtr != IntPtr.Zero)
                     {
                         SendMessage(windowPtr, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                         Console.WriteLine("[+] CustomExplorer has been closed.");
@@ -990,9 +902,7 @@ namespace SalsaNOW
                 }
                 catch (Exception ex)
                 {
-                    var handle = GetConsoleWindow();
-                    ShowWindow(handle, SW_SHOW);
-
+                    ShowConsole();
                     Console.WriteLine(ex.ToString());
                     Console.ReadKey();
                     Environment.Exit(0);
@@ -1000,44 +910,51 @@ namespace SalsaNOW
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // STARTUP BATCH CONFIG
+        // ════════════════════════════════════════════════════════════════════
+
         static void StartupBatchConfig()
         {
-            // Run startup batch file if it exists
-            if (System.IO.File.Exists($"{globalDirectory}\\StartupBatch.bat"))
+            string batchPath = Path.Combine(globalDirectory, "StartupBatch.bat");
+            if (File.Exists(batchPath))
             {
-                var startInfo = new ProcessStartInfo
+                Process.Start(new ProcessStartInfo
                 {
-                    FileName = $"{globalDirectory}\\StartupBatch.bat",
+                    FileName        = batchPath,
                     UseShellExecute = true,
-                };
-
-                Process.Start(startInfo);
+                });
             }
-
-            return;
         }
+
+        // ════════════════════════════════════════════════════════════════════
+        // BING PHOTO OF THE DAY WALLPAPER
+        // ════════════════════════════════════════════════════════════════════
 
         static async Task PhotoOfTheDayBingWallpaper(string appDir)
         {
-            string jsonUrl = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-AU";
-            string domainUrl = "https://www.bing.com";
+            // UHD resolution to avoid compression artifacts.
+            // Photos reset daily at 6:00 PM GMT+11 (Canberra, Australia).
+            const string jsonUrl   = "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-AU";
+            const string domainUrl = "https://www.bing.com";
 
             try
             {
-                // For photos we are going with UHD because artifacts suck
-                // photos reset every day at 6:00 PM GMT+11 Canberra Australia.
-                using (WebClient webClient = new WebClient())
+                using (var webClient = new WebClient())
                 {
-                    string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                    var imagesJson = JObject.Parse(json)["images"].ToString();
-                    List<BingPhotoOfTheDay> bingPhoto = JsonConvert.DeserializeObject<List<BingPhotoOfTheDay>>(imagesJson);
+                    string json     = await webClient.DownloadStringTaskAsync(jsonUrl);
+                    var imagesToken = JObject.Parse(json)["images"];
+                    if (imagesToken == null) return;
 
-                    Console.WriteLine($"[+] Bing photo of the day: {bingPhoto[0].copyright}, {domainUrl}{bingPhoto[0].urlbase}_UHD.jpg");
+                    var bingPhoto = JsonConvert.DeserializeObject<List<BingPhotoOfTheDay>>(imagesToken.ToString());
+                    if (bingPhoto == null || bingPhoto.Count == 0) return;
 
-                    // We modify WinXShells wallpaper
-                    await webClient.DownloadFileTaskAsync(new Uri($"{domainUrl}{bingPhoto[0].urlbase}_UHD.jpg"), Path.Combine(appDir, "wallpaper.jpg"));
+                    string wallpaperUrl = $"{domainUrl}{bingPhoto[0].urlbase}_UHD.jpg";
+                    Console.WriteLine($"[+] Bing photo of the day: {bingPhoto[0].copyright}, {wallpaperUrl}");
 
-                    return;
+                    await webClient.DownloadFileTaskAsync(
+                        new Uri(wallpaperUrl),
+                        Path.Combine(appDir, "wallpaper.jpg"));
                 }
             }
             catch (Exception ex)
@@ -1046,15 +963,23 @@ namespace SalsaNOW
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // GAME SAVES SETUP
+        // ════════════════════════════════════════════════════════════════════
+
         static async Task GameSavesSetup()
         {
-            string jsonUrl = "https://salsanowfiles.work/jsons/GameSavesPaths.json";
-            string gameSavesPath = $"{globalDirectory}\\Game Saves";
+            const string jsonUrl = "https://salsanowfiles.work/jsons/GameSavesPaths.json";
+            string gameSavesPath = Path.Combine(globalDirectory, "Game Saves");
 
-            using (WebClient webClient = new WebClient())
+            try
             {
-                string json = await webClient.DownloadStringTaskAsync(jsonUrl);
-                GamesSavePaths savePaths = JsonConvert.DeserializeObject<GamesSavePaths>(json);
+                GamesSavePaths savePaths;
+                using (var webClient = new WebClient())
+                {
+                    string json = await webClient.DownloadStringTaskAsync(jsonUrl);
+                    savePaths = JsonConvert.DeserializeObject<GamesSavePaths>(json);
+                }
 
                 Directory.CreateDirectory(gameSavesPath);
 
@@ -1063,65 +988,59 @@ namespace SalsaNOW
                     try
                     {
                         string lastDirectory = Path.GetFileName(dir);
-                        string craftedPath = $"{gameSavesPath}\\{lastDirectory}";
+                        string craftedPath   = Path.Combine(gameSavesPath, lastDirectory);
 
                         Directory.CreateDirectory(craftedPath);
 
-                        ProcessStartInfo psi1 = new ProcessStartInfo("cmd.exe", $"/c rmdir /s /q \"{dir}\"")
-                        {
-                            UseShellExecute = true,
-                        };
+                        var psi1 = new ProcessStartInfo("cmd.exe", $"/c rmdir /s /q \"{dir}\"")
+                            { UseShellExecute = true };
+                        var psi2 = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{dir}\" \"{craftedPath}\"")
+                            { UseShellExecute = true };
 
-                        Process process1 = Process.Start(psi1);
+                        Process.Start(psi1);
+                        await Task.Delay(500);
+                        Process.Start(psi2);
 
-                        Thread.Sleep(500);
-
-                        ProcessStartInfo psi2 = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{dir}\" \"{craftedPath}\"")
-                        {
-                            UseShellExecute = true,
-                        };
-
-                        Process process2 = Process.Start(psi2);
-
-                        // We close window "NvContainerWindowClass" from "NVDisplay.Container" because NVIDIA's display container keeps writing
-                        // to the documents folder from the Public user, making it in use always.
+                        // Public\Documents is kept locked by NVDisplay.Container
+                        // close its window so we can delete the folder and create a junction.
                         if (dir.Contains("C:\\Users\\Public\\Documents"))
                         {
-                            Process[] processes = Process.GetProcessesByName("NVDisplay.Container");
-
-                            // We now try and find the windows from NVDisplay.Container and close it.
-                            foreach (var proc in processes)
+                            foreach (var proc in Process.GetProcessesByName("NVDisplay.Container"))
                             {
                                 EnumWindows((hWnd, lParam) =>
                                 {
                                     GetWindowThreadProcessId(hWnd, out uint windowPid);
-
-                                    // Only consider windows belonging to this process
                                     if (windowPid == proc.Id)
                                     {
-                                        var className = new System.Text.StringBuilder(256);
+                                        var className = new StringBuilder(256);
                                         GetClassName(hWnd, className, className.Capacity);
-
-                                        if (className.ToString().StartsWith("NvContainerWindowClass", StringComparison.OrdinalIgnoreCase))
+                                        if (className.ToString().StartsWith("NvContainerWindowClass",
+                                                StringComparison.OrdinalIgnoreCase))
                                         {
                                             Console.WriteLine($"Found: {className}, closing...");
                                             PostMessage(hWnd, WM_CLOSE, 0, 0);
                                         }
                                     }
-
-                                    return true; // continue enumerating windows
+                                    return true;
                                 }, IntPtr.Zero);
                             }
 
-                            // We now try to delete Documents and when done create a junction of Documents from Game Saves
-                            // SalsaNOW directory until successful.
+                            // Retry until Documents is deletable and junction is created, or timeout
                             bool junctionCreated = false;
+                            var  sw = Stopwatch.StartNew();
+                            const int junctionTimeoutMs = 15_000;
+
                             while (!junctionCreated)
                             {
+                                if (sw.ElapsedMilliseconds > junctionTimeoutMs)
+                                {
+                                    Console.WriteLine($"[!] Timed out trying to create junction for {dir}");
+                                    break;
+                                }
+
                                 try
                                 {
                                     Directory.Delete(dir, true);
-
                                     if (!Directory.Exists(dir))
                                     {
                                         Process.Start(psi2);
@@ -1130,7 +1049,7 @@ namespace SalsaNOW
                                 }
                                 catch { }
 
-                                Thread.Sleep(100);
+                                await Task.Delay(100);
                             }
                         }
                     }
@@ -1142,14 +1061,21 @@ namespace SalsaNOW
                     }
                 }
             }
-            return;
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[!] GameSavesSetup failed: {ex}");
+            }
         }
+
+        // ════════════════════════════════════════════════════════════════════
+        // BRICK PREVENTION  (background loop)
+        // ════════════════════════════════════════════════════════════════════
 
         static void BrickPrevention()
         {
-            string userData = "C:\\Program Files (x86)\\Steam\\userdata";
-            string fileCheck = "localconfig.vdf";
-            string blackListedWord = "\"LaunchOptions\"";
+            const string userData        = @"C:\Program Files (x86)\Steam\userdata";
+            const string fileCheck       = "localconfig.vdf";
+            const string blackListedWord = "\"LaunchOptions\"";
 
             while (true)
             {
@@ -1157,52 +1083,39 @@ namespace SalsaNOW
 
                 try
                 {
-                    var listPaths = Directory.EnumerateFiles(userData, fileCheck, SearchOption.AllDirectories);
-
-                    foreach (string currentFile in listPaths)
+                    foreach (string currentFile in Directory.EnumerateFiles(
+                                 userData, fileCheck, SearchOption.AllDirectories))
                     {
-                        StreamReader reader = new StreamReader(currentFile);
-
-                        string text = reader.ReadToEnd();
+                        // File.ReadAllText disposes the handle correctly even on exceptions,
+                        // unlike the original StreamReader which was not disposed on the happy path.
+                        string text = File.ReadAllText(currentFile);
 
                         if (text.Contains(blackListedWord))
                         {
-                            reader.Close();
+                            File.Delete(currentFile);
 
-                            System.IO.File.Delete(currentFile);
-
-                            //Directory.Delete(userData);
-
-                            var handle = GetConsoleWindow();
-                            ShowWindow(handle, SW_SHOW);
-
+                            ShowConsole();
                             Console.ForegroundColor = ConsoleColor.Red;
-
                             Console.WriteLine("[!] STEAM LAUNCH OPTIONS DETECTED, DO NOT USE STEAM LAUNCH OPTIONS, session terminated.");
 
                             foreach (var process in Process.GetProcessesByName("steam"))
-                            {
                                 process.Kill();
-                            }
-                        }
-                        else
-                        {
-                            reader.Close();
                         }
                     }
                 }
-                catch
-                {
-                }
+                catch { }
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // ENABLE RTX  (NVAPI driver profile reset)
+        // ════════════════════════════════════════════════════════════════════
+
+        // Credit: https://github.com/mercuryy-1337/
         static void EnableRTX()
         {
-            // Credit: https://github.com/mercuryy-1337/
-            // NvAPI init, starting point
             var initialize = GetDelegate<Del_NvAPI_Initialize>(ID_NvAPI_Initialize);
-            int status = initialize();
+            int status     = initialize();
             if (status != NVAPI_OK)
                 throw new InvalidOperationException($"NvAPI_Initialize failed with status {status}.");
 
@@ -1235,24 +1148,70 @@ namespace SalsaNOW
                 {
                     try
                     {
-                        var destroySession = GetDelegate<Del_NvAPI_DRS_DestroySession>(ID_NvAPI_DRS_DestroySession);
-                        destroySession(hSession);
+                        GetDelegate<Del_NvAPI_DRS_DestroySession>(ID_NvAPI_DRS_DestroySession)(hSession);
                     }
-                    catch { /* best-effort cleanup but there shouldn't be anything to catch really */ }
+                    catch { /* best-effort cleanup */ }
                 }
 
-                try
-                {
-                    var unload = GetDelegate<Del_NvAPI_Unload>(ID_NvAPI_Unload);
-                    unload();
-                }
+                try { GetDelegate<Del_NvAPI_Unload>(ID_NvAPI_Unload)(); }
                 catch { /* same as above */ }
             }
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // HELPERS
+        // ════════════════════════════════════════════════════════════════════
+        /// Polls for a window with the given caption and closes it via WM_CLOSE.
+        /// Fully async cause it uses await Task.Delay instead of Thread.Sleep.
+        /// Has a configurable timeout so the loop cannot spin forever.
+    
+        static async Task CloseWindowWithTimeoutAsync(string caption, int timeoutMs)
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                IntPtr windowPtr = FindWindowByCaption(IntPtr.Zero, caption);
+                if (windowPtr != IntPtr.Zero)
+                {
+                    SendMessage(windowPtr, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    Console.WriteLine($"[+] {caption} error message has been closed.");
+                    return;
+                }
+                await Task.Delay(100);
+            }
+            Console.WriteLine($"[!] Timeout waiting for '{caption}' window.");
+        }
+
+        /// Creates a .lnk shortcut -> extracted from the 6 inline copies in the original
+        static void CreateShortcut(string lnkPath, string targetPath, string workingDir)
+        {
+            try
+            {
+                var shell    = new WshShell();
+                var shortcut = (IWshShortcut)shell.CreateShortcut(lnkPath);
+                shortcut.TargetPath       = targetPath;
+                shortcut.WorkingDirectory = workingDir;
+                shortcut.Save();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[!] Failed to create shortcut at {lnkPath}: {ex.Message}");
+            }
+        }
+
+        /// Makes the hidden console window visible
+        static void ShowConsole()
+        {
+            ShowWindow(GetConsoleWindow(), SW_SHOW);
+        }
+
+        // ════════════════════════════════════════════════════════════════════
+        // MODEL CLASSES
+        // ════════════════════════════════════════════════════════════════════
+
         public class SavePath
         {
-            public string configName { get; set; }
+            public string configName      { get; set; }
             public string directoryCreate { get; set; }
         }
 
@@ -1260,38 +1219,39 @@ namespace SalsaNOW
         {
             public List<string> paths { get; set; }
         }
+
         public class Apps
         {
-            public string name { get; set; }
+            public string name          { get; set; }
             public string fileExtension { get; set; }
-            public string exeName { get; set; }
-            public string run { get; set; }
-            public string url { get; set; }
+            public string exeName       { get; set; }
+            public string run           { get; set; } 
+            public string url           { get; set; }
         }
 
         public class SilentApps
         {
-            public string name { get; set; }
+            public string name          { get; set; }
             public string fileExtension { get; set; }
-            public string fileName { get; set; }
-            public string archive { get; set; }
-            public string run { get; set; }
-            public string url { get; set; }
+            public string fileName      { get; set; }
+            public string archive       { get; set; } 
+            public string run           { get; set; } 
+            public string url           { get; set; }
         }
 
         public class DesktopInfo
         {
-            public string name { get; set; }
-            public string exeName { get; set; }
+            public string name         { get; set; }
+            public string exeName      { get; set; }
             public string taskbarFixer { get; set; }
-            public string zipConfig { get; set; }
-            public string run { get; set; }
-            public string url { get; set; }
+            public string zipConfig    { get; set; }
+            public string run          { get; set; }
+            public string url          { get; set; }
         }
 
         public class BingPhotoOfTheDay
         {
-            public string urlbase { get; set; }
+            public string urlbase   { get; set; }
             public string copyright { get; set; }
         }
     }
