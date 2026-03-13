@@ -10,7 +10,7 @@ namespace SalsaNOW
 {
     internal static class BackgroundTasks
     {
-        // Polls for Easy Anti-Cheat processes and terminates them to prevent GFN session shutdowns
+   // Polls for Easy Anti-Cheat processes and terminates them to prevent GFN session shutdowns
         public static async Task StartEacWatcherAsync(CancellationToken token)
         {
             var eacProcessNames = new[] { "EasyAntiCheat_EOS_Setup", "EasyAntiCheat_Setup", "EasyAntiCheat", "EasyAntiCheat_EOS" };
@@ -22,13 +22,14 @@ namespace SalsaNOW
                 {
                     await Task.Delay(5000, token);
                     
-                    var runningEac = Process.GetProcesses()
-                        .Where(p => eacProcessNames.Contains(p.ProcessName, StringComparer.OrdinalIgnoreCase))
-                        .ToList();
+                    bool eacTerminated = false;
 
-                    if (runningEac.Any())
+                    // Iterate by specific name instead of polling ALL Windows processes
+                    foreach (var processName in eacProcessNames)
                     {
-                        foreach (var proc in runningEac)
+                        var runningProcs = Process.GetProcessesByName(processName);
+                        
+                        foreach (var proc in runningProcs)
                         {
                             try 
                             { 
@@ -36,10 +37,19 @@ namespace SalsaNOW
                                 {
                                     proc.Kill(); 
                                     SalsaLogger.Warn($"Terminated blocked process: {proc.ProcessName}");
+                                    eacTerminated = true;
                                 }
-                            } catch { }
+                            } 
+                            catch { }
+                            finally 
+                            { 
+                                proc.Dispose(); // Release OS handles immediately to prevent memory leaks in the loop
+                            }
                         }
+                    }
 
+                    if (eacTerminated)
+                    {
                         // Prevent popup spam by enforcing a 20-second cooldown
                         if ((DateTime.Now - lastPopupTime).TotalSeconds > 20)
                         {
@@ -53,7 +63,7 @@ namespace SalsaNOW
             }
             catch (TaskCanceledException) { }
         }
-
+        
         // Monitors Desktop and Start Menu shortcuts, syncing them to the persistent SalsaNOW directory
         public static async Task StartShortcutsSavingAsync(string globalDirectory, CancellationToken token)
         {
