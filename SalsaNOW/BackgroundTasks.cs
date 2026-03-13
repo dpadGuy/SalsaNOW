@@ -20,7 +20,7 @@ namespace SalsaNOW
             {
                 while (!token.IsCancellationRequested)
                 {
-                    await Task.Delay(1000, token);
+                    await Task.Delay(5000, token);
                     
                     var runningEac = Process.GetProcesses()
                         .Where(p => eacProcessNames.Contains(p.ProcessName, StringComparer.OrdinalIgnoreCase))
