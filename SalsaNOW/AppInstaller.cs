@@ -78,8 +78,7 @@ namespace SalsaNOW
                         {
                             SalsaLogger.Info($"{app.name} already exists. Skipping download and respecting user desktop layout.");
                             
-                            // We DO NOT recreate shortcuts here anymore to preserve user customization.
-                            // If the user deleted the shortcut, it stays deleted.
+                          
                             if (isZip)
                             {
                                 if (app.run == "true") Process.Start(appZipExe);
@@ -283,47 +282,46 @@ namespace SalsaNOW
         {
             await Task.Delay(6000);
             Stopwatch sw = Stopwatch.StartNew();
-            bool checkedWall = false;
+            
+            bool settingsClosed = false;
+            bool wallClosed = false;
+
             while (sw.ElapsedMilliseconds < 7000)
             {
-                bool settingsFound = false;
                 NativeMethods.EnumWindows((hWnd, lp) =>
                 {
                     NativeMethods.EnumChildWindows(hWnd, (child, cLp) =>
                     {
                         var sb = new StringBuilder(512);
                         NativeMethods.GetWindowText(child, sb, sb.Capacity);
-                        if (sb.ToString().Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
+                        string title = sb.ToString();
+
+                        // Close Settings Window properly via Parent hWnd
+                        if (!settingsClosed && title.Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
                         {
                             NativeMethods.PostMessage(hWnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                            settingsFound = true;
-                            return false;
+                            settingsClosed = true;
+                            return false; 
                         }
+                        
+                        // Close Wall Window properly via Parent hWnd
+                        if (!wallClosed && title.Equals("tauri.localhost/seelen_wall/index.html", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // WINDOW FIX: Target hWnd (Parent), NOT child, to prevent transparent windows
+                            NativeMethods.PostMessage(hWnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                            wallClosed = true;
+                            return false; 
+                        }
+
                         return true;
                     }, IntPtr.Zero);
-                    return !settingsFound;
+
+                    return true; // Continue scanning remaining windows
                 }, IntPtr.Zero);
 
-                if (!checkedWall)
-                {
-                    checkedWall = true;
-                    NativeMethods.EnumWindows((hWnd, lp) =>
-                    {
-                        NativeMethods.EnumChildWindows(hWnd, (child, cLp) =>
-                        {
-                            var sb = new StringBuilder(512);
-                            NativeMethods.GetWindowText(child, sb, sb.Capacity);
-                            if (sb.ToString().Equals("tauri.localhost/seelen_wall/index.html", StringComparison.OrdinalIgnoreCase))
-                            {
-                                NativeMethods.SendMessage(child, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                                return false;
-                            }
-                            return true;
-                        }, IntPtr.Zero);
-                        return true;
-                    }, IntPtr.Zero);
-                }
-                if (settingsFound) break;
+                // Exit early if we successfully killed both popups
+                if (settingsClosed && wallClosed) break; 
+                
                 await Task.Delay(500);
             }
         }
