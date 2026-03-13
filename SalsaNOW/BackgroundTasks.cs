@@ -107,19 +107,20 @@ namespace SalsaNOW
                     }
                     catch { }
 
-                    // 4. Sync Start Menu to Shortcuts (Overwrite MUST be false)
+                    // 4. Sync Shortcuts To Start Menu
                     try
                     {
-                        var lnkFilesStart = Directory.GetFiles(startMenuPath, "*.lnk", SearchOption.AllDirectories);
+                        var lnkFilesStart = Directory.GetFiles(shortcutsDir, "*.lnk", SearchOption.AllDirectories);
                         foreach (var file in lnkFilesStart)
                         {
-                            string destPath = Path.Combine(shortcutsDir, Path.GetFileName(file));
+                            string destPath = Path.Combine(startMenuPath, Path.GetFileName(file));
                             if (!File.Exists(destPath))
                             {
                                 try 
                                 { 
+                                    if (!Directory.Exists(startMenuPath)) Directory.CreateDirectory(startMenuPath);
                                     File.Copy(file, destPath, false); 
-                                    SalsaLogger.Info($"Backed up Start Menu shortcut: {Path.GetFileName(file)}");
+                                    SalsaLogger.Info($"Copied shortcut over to Start Menu: {Path.GetFileName(file)}");
                                 } 
                                 catch { }
                             }
