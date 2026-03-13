@@ -76,17 +76,16 @@ namespace SalsaNOW
                         }
                         else
                         {
-                            SalsaLogger.Info($"{app.name} already exists. Skipping download, but refreshing shortcut.");
+                            SalsaLogger.Info($"{app.name} already exists. Skipping download and respecting user desktop layout.");
                             
-                            // Rebuild shortcuts for existing apps to bind them to the current VM's Volume GUID
+                            // We DO NOT recreate shortcuts here anymore to preserve user customization.
+                            // If the user deleted the shortcut, it stays deleted.
                             if (isZip)
                             {
-                                CreateShortcut(app.name, desktopPath, appZipExe, Path.GetDirectoryName(appZipExe));
                                 if (app.run == "true") Process.Start(appZipExe);
                             }
                             else if (isExe)
                             {
-                                CreateShortcut(app.name, desktopPath, appExePath, globalDirectory);
                                 if (app.run == "true") Process.Start(appExePath);
                             }
                         }
