@@ -65,7 +65,7 @@
     <GenerateManifests>true</GenerateManifests>
   </PropertyGroup>
   <PropertyGroup>
-    <SignManifests>true</SignManifests>
+    <SignManifests>false</SignManifests>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Costura, Version=6.0.0.0, Culture=neutral, PublicKeyToken=9919ef960d84173d, processorArchitecture=MSIL">
@@ -99,8 +99,16 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AppInstaller.cs" />
+    <Compile Include="BackgroundTasks.cs" />
+    <Compile Include="Models\SalsaModels.cs" />
+    <Compile Include="NativeMethods.cs" />
+    <Compile Include="NvidiaManager.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="SalsaLogger.cs" />
+    <Compile Include="SalsaSettings.cs" />
+    <Compile Include="SteamManager.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
