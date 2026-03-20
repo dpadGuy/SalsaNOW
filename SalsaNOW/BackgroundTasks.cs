@@ -10,11 +10,10 @@ namespace SalsaNOW
 {
     internal static class BackgroundTasks
     {
-   // Polls for Easy Anti-Cheat processes and terminates them to prevent GFN session shutdowns
+        // Polls for Easy Anti-Cheat processes and terminates them to prevent GFN session shutdowns
         public static async Task StartEacWatcherAsync(CancellationToken token)
         {
             var eacProcessNames = new[] { "EasyAntiCheat_EOS_Setup", "EasyAntiCheat_Setup", "EasyAntiCheat", "EasyAntiCheat_EOS" };
-            DateTime lastPopupTime = DateTime.MinValue;
 
             try
             {
@@ -28,7 +27,9 @@ namespace SalsaNOW
                     foreach (var processName in eacProcessNames)
                     {
                         var runningProcs = Process.GetProcessesByName(processName);
-                        
+
+                        if (runningProcs.Length == 0) break;
+
                         foreach (var proc in runningProcs)
                         {
                             try 
@@ -50,14 +51,9 @@ namespace SalsaNOW
 
                     if (eacTerminated)
                     {
-                        // Prevent popup spam by enforcing a 20-second cooldown
-                        if ((DateTime.Now - lastPopupTime).TotalSeconds > 20)
-                        {
-                            lastPopupTime = DateTime.Now;
-                            var thread = new Thread(() => MessageBox.Show("Easy Anti-Cheat is not supported in SalsaNOW sessions and has been terminated to prevent a session crash.", "SalsaNOW - EAC Protection", MessageBoxButtons.OK, MessageBoxIcon.Warning));
-                            thread.SetApartmentState(ApartmentState.STA);
-                            thread.Start();
-                        }
+                        _ = Task.Run(() => MessageBox.Show("Easy Anti-Cheat processes have been terminated to prevent session issues. Anti-Cheat games don't work.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information));
+
+                        eacTerminated = false;
                     }
                 }
             }
@@ -208,28 +204,24 @@ namespace SalsaNOW
             catch (TaskCanceledException) { }
         }
         
-        // Monitors Steam userdata for invalid LaunchOptions to prevent session bricking
+        // Monitors Steam userdata for file "localconfig.vdf" and removes it if available in order to prevent accidental bricking
         public static async Task StartBrickPreventionAsync(CancellationToken token)
         {
             string userData = @"C:\Program Files (x86)\Steam\userdata";
-            string blackListed = "\"LaunchOptions\"";
 
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    await Task.Delay(1500, token);
+                    await Task.Delay(1000, token);
                     if (!Directory.Exists(userData)) continue;
 
                     var files = Directory.EnumerateFiles(userData, "localconfig.vdf", SearchOption.AllDirectories);
                     foreach (var file in files)
                     {
-                        if (File.ReadAllText(file).Contains(blackListed))
+                        if (File.Exists(file))
                         {
                             File.Delete(file);
-                            NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_SHOW);
-                            SalsaLogger.Error("STEAM LAUNCH OPTIONS DETECTED. Session terminated.");
-                            foreach (var p in Process.GetProcessesByName("steam")) p.Kill();
                         }
                     }
                 }
