@@ -214,6 +214,14 @@ namespace SalsaNOW
                     {
                         if (desktop.name.Contains("WinXShell"))
                         {
+                            // Change winxshell exe to the proper name in case of batch failure.
+                            if (!File.Exists(exePath))
+                            {
+                                File.Move($"{appDir}\\explorer.exe", exePath);
+
+                                Thread.Sleep(1000);
+                            }
+
                             if (bingWall) await DownloadBingWallpaper(appDir);
                             Process.Start(exePath);
                             CloseWindowLoop("WinXShell");
