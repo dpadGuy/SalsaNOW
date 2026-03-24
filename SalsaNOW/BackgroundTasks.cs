@@ -203,30 +203,95 @@ namespace SalsaNOW
             }
             catch (TaskCanceledException) { }
         }
-        
-        // Monitors Steam userdata for file "localconfig.vdf" and removes it if available in order to prevent accidental bricking
-        public static async Task StartBrickPreventionAsync(CancellationToken token)
+
+        public static Task StartBrickPreventionAsync(CancellationToken token)
         {
             string userData = @"C:\Program Files (x86)\Steam\userdata";
+            string blackListed = "\"LaunchOptions\"";
 
-            try
+            if (!Directory.Exists(userData))
+                return Task.CompletedTask;
+
+            var watcher = new FileSystemWatcher
             {
-                while (!token.IsCancellationRequested)
-                {
-                    await Task.Delay(1000, token);
-                    if (!Directory.Exists(userData)) continue;
+                Path = userData,
+                Filter = "localconfig.vdf",
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName
+            };
 
-                    var files = Directory.EnumerateFiles(userData, "localconfig.vdf", SearchOption.AllDirectories);
-                    foreach (var file in files)
+            FileSystemEventHandler handler = (s, e) => HandleFile(e.FullPath, blackListed);
+            RenamedEventHandler renameHandler = (s, e) => HandleFile(e.FullPath, blackListed);
+
+            watcher.Created += handler;
+            watcher.Changed += handler;
+            watcher.Renamed += renameHandler;
+
+            watcher.EnableRaisingEvents = true;
+
+            // Initial scan (important)
+            foreach (var file in Directory.EnumerateFiles(userData, "localconfig.vdf", SearchOption.AllDirectories))
+            {
+                HandleFile(file, blackListed);
+            }
+
+            // Keep alive until cancelled
+            return Task.Run(() =>
+            {
+                try
+                {
+                    token.WaitHandle.WaitOne();
+                }
+                finally
+                {
+                    watcher.EnableRaisingEvents = false;
+                    watcher.Dispose();
+                }
+            }, token);
+        }
+        private static void HandleFile(string path, string blackListed)
+        {
+            Task.Run(async () =>
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    try
                     {
-                        if (File.Exists(file))
+                        if (!File.Exists(path))
+                            return;
+
+                        string content;
+                        using (var reader = new StreamReader(path))
                         {
-                            File.Delete(file);
+                            content = await reader.ReadToEndAsync();
                         }
+
+                        if (content.Contains(blackListed))
+                        {
+                            File.Delete(path);
+
+                            NativeMethods.ShowWindow(
+                                NativeMethods.GetConsoleWindow(),
+                                NativeMethods.SW_SHOW);
+
+                            SalsaLogger.Error("STEAM LAUNCH OPTIONS DETECTED. Session terminated.");
+
+                            foreach (var p in Process.GetProcessesByName("steam"))
+                                p.Kill();
+                        }
+
+                        return;
+                    }
+                    catch (IOException)
+                    {
+                        await Task.Delay(200);
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        return;
                     }
                 }
-            }
-            catch (TaskCanceledException) { }
+            });
         }
     }
 }
