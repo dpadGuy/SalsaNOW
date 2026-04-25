@@ -31,7 +31,7 @@ namespace SalsaNOW
             ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, errors) => true;
 
             await Startup();
-            
+
             // Load configuration once to share settings across modules
             SalsaSettings.Load(globalDirectory);
 
@@ -45,14 +45,14 @@ namespace SalsaNOW
             await AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath);
             await AppInstaller.DesktopInstallAsync(globalDirectory);
             await AppInstaller.AppsInstallSilentAsync(globalDirectory);
-            
+
             await SteamManager.ShutdownServerAsync(globalDirectory);
-            
+
             // Apply Nvidia optimizations if enabled
             if (SalsaSettings.NvidiaRaytracing) NvidiaManager.EnableRTX();
 
             NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
-            
+
             _ = SteamManager.SetupGameSavesAsync(globalDirectory);
             
             string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
@@ -63,7 +63,7 @@ namespace SalsaNOW
 
         static async Task Startup()
         {
-            try
+            try                                                                                                               
             {
                 if (!Directory.Exists(@"C:\Asgard")) 
                 { 

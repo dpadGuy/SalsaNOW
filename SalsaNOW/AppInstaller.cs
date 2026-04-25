@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
@@ -43,6 +43,9 @@ namespace SalsaNOW
                 {
                     using (var webClient = new WebClient())
                     {
+                        webClient.Headers.Add("Cache-Control", "no-cache");
+                        webClient.Headers.Add("Pragma", "no-cache");
+
                         string desktopPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), $"{app.name}.lnk");
                         string appDir = Path.Combine(globalDirectory, app.name);
                         string appExePath = Path.Combine(globalDirectory, app.exeName);
@@ -129,6 +132,9 @@ namespace SalsaNOW
                 {
                     using (var webClient = new WebClient())
                     {
+                        webClient.Headers.Add("Cache-Control", "no-cache");
+                        webClient.Headers.Add("Pragma", "no-cache");
+
                         string appFolder = Path.Combine(silentAppsPath, app.name);
                         string appPath = Path.Combine(silentAppsPath, $"{app.fileName}.{app.fileExtension}");
                         string appZipPath = Path.Combine(appFolder, $"{app.fileName}.{app.fileExtension}");
@@ -148,7 +154,17 @@ namespace SalsaNOW
                             {
                                 await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
                             }
-                            if (app.run == "true") Process.Start(new ProcessStartInfo { FileName = appPath, UseShellExecute = true });
+
+                            if (app.run == "true")
+                            {
+                                Process.Start(new ProcessStartInfo
+                                {
+                                    FileName = appPath,
+                                    UseShellExecute = false,
+                                    CreateNoWindow = true,
+                                    WindowStyle = ProcessWindowStyle.Hidden
+                                });
+                            }
                         }
                     }
                 })).ToList();
@@ -192,6 +208,9 @@ namespace SalsaNOW
                     {
                         using (var wc = new WebClient())
                         {
+                            wc.Headers.Add("Cache-Control", "no-cache");
+                            wc.Headers.Add("Pragma", "no-cache");
+
                             await wc.DownloadFileTaskAsync(new Uri(desktop.url), zipFile);
                             ZipFile.ExtractToDirectory(zipFile, appDir);
                             System.IO.File.Delete(zipFile);
@@ -288,14 +307,10 @@ namespace SalsaNOW
         // Monitors Seelen UI startup and automatically suppresses initial settings and wall popups
         private static async Task SeelenSettingsLoop()
         {
-            await Task.Delay(6000);
-            Stopwatch sw = Stopwatch.StartNew();
-            
-            bool settingsClosed = false;
-            bool wallClosed = false;
-
-            while (sw.ElapsedMilliseconds < 7000)
+            while (true)
             {
+                bool foundSettings = false;
+
                 NativeMethods.EnumWindows((hWnd, lp) =>
                 {
                     NativeMethods.EnumChildWindows(hWnd, (child, cLp) =>
@@ -304,32 +319,22 @@ namespace SalsaNOW
                         NativeMethods.GetWindowText(child, sb, sb.Capacity);
                         string title = sb.ToString();
 
-                        // Close Settings Window properly via Parent hWnd
-                        if (!settingsClosed && title.Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
+                        if (title.Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
                         {
                             NativeMethods.PostMessage(hWnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                            settingsClosed = true;
-                            return false; 
-                        }
-                        
-                        // Close Wall Window properly via Parent hWnd
-                        if (!wallClosed && title.Equals("tauri.localhost/seelen_wall/index.html", StringComparison.OrdinalIgnoreCase))
-                        {
-                            // WINDOW FIX: Target hWnd (Parent), NOT child, to prevent transparent windows
-                            NativeMethods.PostMessage(hWnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                            wallClosed = true;
-                            return false; 
+                            foundSettings = true;
+                            return false; // stop child enumeration
                         }
 
                         return true;
                     }, IntPtr.Zero);
 
-                    return true; // Continue scanning remaining windows
+                    return !foundSettings; // stop EnumWindows if found
                 }, IntPtr.Zero);
 
-                // Exit early if we successfully killed both popups
-                if (settingsClosed && wallClosed) break; 
-                
+                if (foundSettings)
+                    return; // exit method immediately when found
+
                 await Task.Delay(500);
             }
         }
