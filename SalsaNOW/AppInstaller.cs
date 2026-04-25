@@ -321,8 +321,14 @@ namespace SalsaNOW
 
                         if (title.Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
                         {
-                            NativeMethods.PostMessage(hWnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                             foundSettings = true;
+
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(500); // wait 500ms before closing
+                                NativeMethods.PostMessage(hWnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                            });
+
                             return false; // stop child enumeration
                         }
 

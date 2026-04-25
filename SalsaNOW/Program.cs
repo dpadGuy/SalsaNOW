@@ -63,7 +63,7 @@ namespace SalsaNOW
 
         static async Task Startup()
         {
-            try                                                                                                               
+            try
             {
                 if (!Directory.Exists(@"C:\Asgard")) 
                 { 
