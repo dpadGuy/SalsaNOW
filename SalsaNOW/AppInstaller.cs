@@ -151,10 +151,7 @@ namespace SalsaNOW
                         }
                         else
                         {
-                            if (!System.IO.File.Exists(appPath))
-                            {
-                                await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
-                            }
+                            await webClient.DownloadFileTaskAsync(new Uri(app.url), appPath);
 
                             if (app.run == "true")
                             {
@@ -234,18 +231,13 @@ namespace SalsaNOW
                             // Run after fresh install
                             if (desktop.name.Contains("WinXShell"))
                             {
-                                Process.Start(exePath);
-                                Thread.Sleep(500);
-                                CloseWindowLoop("WinXShell");
-                            }
+                                var psi = new ProcessStartInfo
+                                {
+                                    FileName = exePath,
+                                    WorkingDirectory = appDir
+                                };
 
-                            if (desktop.name.Contains("seelenui") && skipSeelen)
-                            {
-                                await ApplySeelenConfig(wc, desktop.zipConfig, zipFile);
-
-                                Thread.Sleep(500); // wait for Seelen UI to initialize
-
-                                Process.Start(exePath);
+                                Process.Start(psi);
                             }
                         }
                     }
@@ -257,95 +249,18 @@ namespace SalsaNOW
                             if (bingWall)
                                 await DownloadBingWallpaper(appDir);
 
-                            Process.Start(exePath);
-                            CloseWindowLoop("WinXShell");
-                        }
+                            var psi = new ProcessStartInfo
+                            {
+                                FileName = exePath,
+                                WorkingDirectory = appDir
+                            };
 
-                        if (desktop.name.Contains("seelenui") && skipSeelen)
-                        {
-                            using (var wc = new WebClient())
-                                await ApplySeelenConfig(wc, desktop.zipConfig, zipFile);
-
-                            Thread.Sleep(500); // wait for Seelen UI to initialize
-
-                            Process.Start(exePath);
+                            Process.Start(psi);
                         }
                     }
                 }
-
-                if (skipSeelen) await SeelenSettingsLoop();
             }
             catch (Exception ex) { SalsaLogger.Error(ex.ToString()); }
-        }
-
-        // Extracts fresh Seelen UI config, cleaning the target directory beforehand to prevent corruption
-        private static async Task<bool> ApplySeelenConfig(WebClient wc, string url, string zip)
-        {
-            await wc.DownloadFileTaskAsync(new Uri(url), zip);
-
-            string target = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "com.seelen.seelen-ui");
-
-            const int maxRetries = 5;
-
-            try
-            {
-                for (int attempt = 1; attempt <= maxRetries; attempt++)
-                {
-                    try
-                    {
-                        // Remove existing config
-                        if (Directory.Exists(target))
-                        {
-                            Directory.Delete(target, true);
-
-                            if (Directory.Exists(target))
-                                throw new IOException("Failed to delete target directory.");
-                        }
-
-                        // Extract new config
-                        ZipFile.ExtractToDirectory(zip, target);
-
-                        // Verify extraction
-                        if (!Directory.Exists(target) ||
-                            !Directory.EnumerateFileSystemEntries(target).Any())
-                        {
-                            throw new IOException("Extraction verification failed.");
-                        }
-
-                        return true; // Success
-                    }
-                    catch
-                    {
-                        // Clean up partial extraction before retrying
-                        try
-                        {
-                            if (Directory.Exists(target))
-                                Directory.Delete(target, true);
-                        }
-                        catch { }
-
-                        if (attempt == maxRetries)
-                            return false;
-
-                        await Task.Delay(500);
-                    }
-                }
-
-                return false;
-            }
-            finally
-            {
-                if (File.Exists(zip))
-                {
-                    try
-                    {
-                        File.Delete(zip);
-                    }
-                    catch { }
-                }
-            }
         }
 
         // Fetches and applies the UHD Bing Photo of the Day
@@ -361,62 +276,6 @@ namespace SalsaNOW
                 }
             }
             catch { }
-        }
-
-        // Synchronously waits for a specific window to initialize before closing it
-        private static void CloseWindowLoop(string title)
-        {
-            for (int i = 0; i < 100; i++)
-            {
-                IntPtr ptr = NativeMethods.FindWindowByCaption(IntPtr.Zero, title);
-                if (ptr != IntPtr.Zero)
-                {
-                    NativeMethods.SendMessage(ptr, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                    break;
-                }
-                Thread.Sleep(100);
-            }
-        }
-
-        // Monitors Seelen UI startup and automatically suppresses initial settings and wall popups
-        private static async Task SeelenSettingsLoop()
-        {
-            while (true)
-            {
-                bool foundSettings = false;
-
-                NativeMethods.EnumWindows((hWnd, lp) =>
-                {
-                    NativeMethods.EnumChildWindows(hWnd, (child, cLp) =>
-                    {
-                        var sb = new StringBuilder(512);
-                        NativeMethods.GetWindowText(child, sb, sb.Capacity);
-                        string title = sb.ToString();
-
-                        if (title.Equals("tauri.localhost/settings/index.html", StringComparison.OrdinalIgnoreCase))
-                        {
-                            foundSettings = true;
-
-                            _ = Task.Run(async () =>
-                            {
-                                await Task.Delay(500); // wait 500ms before closing
-                                NativeMethods.PostMessage(hWnd, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
-                            });
-
-                            return false; // stop child enumeration
-                        }
-
-                        return true;
-                    }, IntPtr.Zero);
-
-                    return !foundSettings; // stop EnumWindows if found
-                }, IntPtr.Zero);
-
-                if (foundSettings)
-                    return; // exit method immediately when found
-
-                await Task.Delay(500);
-            }
         }
 
         // Generates Windows shortcuts, deleting existing dead shortcuts first to ensure proper VM binding
