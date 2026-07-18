@@ -279,7 +279,7 @@ namespace SalsaNOW
         }
 
         // Generates Windows shortcuts, deleting existing dead shortcuts first to ensure proper VM binding
-        private static void CreateShortcut(string name, string path, string target, string workDir)
+        public static void CreateShortcut(string name, string path, string target, string workDir)
         {
             // Attempt to remove dead/corrupt shortcut to enforce generation of a new Volume GUID
             for (int i = 0; i < 5; i++)

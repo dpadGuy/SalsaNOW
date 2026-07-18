@@ -31,7 +31,43 @@ namespace SalsaNOW
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
-            Thread.Sleep(1000);
+            if (!Directory.Exists(@"C:\Asgard"))
+            {
+                Console.WriteLine("[!] Not a GeForce NOW environment. Exiting...");
+                await Task.Delay(5000); Environment.Exit(0);
+            }
+
+            // Recovery mode prompt
+            const string text = "Press DEL key for recovery mode";
+            DateTime start = DateTime.Now;
+            DateTime end = start.AddSeconds(3);
+
+            while (DateTime.Now < end)
+            {
+                if (Console.KeyAvailable)
+                {
+                    var key = Console.ReadKey(true);
+
+                    if (key.Key == ConsoleKey.Delete)
+                    {
+                        // Clear the prompt line
+                        Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
+
+                        Console.WriteLine("Recovery mode selected.");
+                        await RecoveryMode.ShowRecoveryPrompt();
+                        return;
+                    }
+                }
+
+                int dots = Math.Min((int)(DateTime.Now - start).TotalSeconds + 1, 3);
+
+                Console.Write($"\r{text}{new string('.', dots)}");
+
+                Thread.Sleep(10);
+            }
+
+            // Clear the prompt line before continuing
+            Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
 
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
             ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, errors) => true;
@@ -71,12 +107,6 @@ namespace SalsaNOW
         {
             try
             {
-                if (!Directory.Exists(@"C:\Asgard"))
-                {
-                    Console.WriteLine("[!] Not a GeForce NOW environment. Exiting...");
-                    await Task.Delay(5000); Environment.Exit(0);
-                }
-
                 using (var wc = new WebClient())
                 {
                     var dir = JsonConvert.DeserializeObject<System.Collections.Generic.List<SavePath>>(await wc.DownloadStringTaskAsync("https://salsanowfiles.work/jsons/directory.json"))[0];
