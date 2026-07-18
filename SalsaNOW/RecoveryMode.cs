@@ -108,14 +108,21 @@ namespace SalsaNOW
         {
             Console.WriteLine("Factory Reset selected.");
 
-            await Task.Delay(2000);
-
             string globalDirectory = "";
 
             using (var wc = new WebClient())
             {
                 var dir = JsonConvert.DeserializeObject<System.Collections.Generic.List<SavePath>>(await wc.DownloadStringTaskAsync("https://salsanowfiles.work/jsons/directory.json"))[0];
                 globalDirectory = dir.directoryCreate;
+            }
+
+            if (!Directory.Exists(globalDirectory))
+            {
+                SalsaLogger.Error($"Global directory '{globalDirectory}' does not exist, make sure you first install SalsaNOW.");
+
+                Thread.Sleep(3000);
+
+                return;
             }
 
             Directory.Delete(globalDirectory, true);
@@ -128,6 +135,8 @@ namespace SalsaNOW
 
         static async Task RestoreShortcuts()
         {
+            Console.WriteLine("Restore shortcuts selected.");
+
             const string jsonUrl = "https://salsanowfiles.work/jsons/apps.json";
 
             try
@@ -140,6 +149,15 @@ namespace SalsaNOW
                         await wc.DownloadStringTaskAsync("https://salsanowfiles.work/jsons/directory.json"))[0];
 
                     globalDirectory = dir.directoryCreate;
+
+                    if(!Directory.Exists(globalDirectory))
+                    {
+                        SalsaLogger.Error($"Global directory '{globalDirectory}' does not exist, make sure you first install SalsaNOW.");
+
+                        Thread.Sleep(3000);
+
+                        return;
+                    }
 
                     string json = await wc.DownloadStringTaskAsync(jsonUrl);
                     var apps = JsonConvert.DeserializeObject<List<Apps>>(json);
