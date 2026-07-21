@@ -17,7 +17,7 @@ namespace SalsaNOW
 
         static async Task Main(string[] args)
         {
-            Console.Title = "SalsaNOW V1.6.6 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.6-hotfix1 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {

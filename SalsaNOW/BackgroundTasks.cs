@@ -206,48 +206,57 @@ namespace SalsaNOW
 
         public static Task StartBrickPreventionAsync(CancellationToken token)
         {
-            string userData = @"C:\Program Files (x86)\Steam\userdata";
-            string blackListed = "\"LaunchOptions\"";
-
-            if (!Directory.Exists(userData))
-                return Task.CompletedTask;
-
-            var watcher = new FileSystemWatcher
+            // HOTFIX1: Continue execution even if something goes wrong (will be improved in the near future)
+            try
             {
-                Path = userData,
-                Filter = "localconfig.vdf",
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName
-            };
+                string userData = @"C:\Program Files (x86)\Steam\userdata";
+                string blackListed = "\"LaunchOptions\"";
 
-            FileSystemEventHandler handler = (s, e) => HandleFile(e.FullPath, blackListed);
-            RenamedEventHandler renameHandler = (s, e) => HandleFile(e.FullPath, blackListed);
+                if (!Directory.Exists(userData))
+                    return Task.CompletedTask;
 
-            watcher.Created += handler;
-            watcher.Changed += handler;
-            watcher.Renamed += renameHandler;
+                var watcher = new FileSystemWatcher
+                {
+                    Path = userData,
+                    Filter = "localconfig.vdf",
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName
+                };
 
-            watcher.EnableRaisingEvents = true;
+                FileSystemEventHandler handler = (s, e) => HandleFile(e.FullPath, blackListed);
+                RenamedEventHandler renameHandler = (s, e) => HandleFile(e.FullPath, blackListed);
 
-            // Initial scan (important)
-            foreach (var file in Directory.EnumerateFiles(userData, "localconfig.vdf", SearchOption.AllDirectories))
-            {
-                HandleFile(file, blackListed);
+                watcher.Created += handler;
+                watcher.Changed += handler;
+                watcher.Renamed += renameHandler;
+
+                watcher.EnableRaisingEvents = true;
+
+                // Initial scan (important)
+                foreach (var file in Directory.EnumerateFiles(userData, "localconfig.vdf", SearchOption.AllDirectories))
+                {
+                    HandleFile(file, blackListed);
+                }
+
+                // Keep alive until cancelled
+                return Task.Run(() =>
+                {
+                    try
+                    {
+                        token.WaitHandle.WaitOne();
+                    }
+                    finally
+                    {
+                        watcher.EnableRaisingEvents = false;
+                        watcher.Dispose();
+                    }
+                }, token);
             }
-
-            // Keep alive until cancelled
-            return Task.Run(() =>
+            catch (Exception ex)
             {
-                try
-                {
-                    token.WaitHandle.WaitOne();
-                }
-                finally
-                {
-                    watcher.EnableRaisingEvents = false;
-                    watcher.Dispose();
-                }
-            }, token);
+                SalsaLogger.Error($"Brick prevention task failed: {ex.Message}, MAKE SURE YOU DO NOT USE THE STEAM LAUNCH OPTIONS");
+                return Task.CompletedTask;
+            }
         }
         private static void HandleFile(string path, string blackListed)
         {
