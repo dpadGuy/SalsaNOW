@@ -15,6 +15,23 @@ namespace SalsaNOW
 {
     internal static class AppInstaller
     {
+        internal const uint SPI_SETDESKWALLPAPER = 0x0014;
+        internal const uint SPIF_UPDATEINIFILE = 0x01;
+        internal const uint SPIF_SENDCHANGE = 0x02;
+
+        static readonly string[] SupportedExtensions =
+        {
+        ".bmp",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".tif",
+        ".tiff",
+        ".webp",
+        ".jxr"
+        };
+
         // Parallel installation of user-defined apps from remote and local JSON sources
         public static async Task AppsInstallAsync(string globalDirectory, string customAppsJsonPath)
         {
@@ -103,7 +120,8 @@ namespace SalsaNOW
         // Silent background app deployment with automated cleanup of obsolete files/folders
         public static async Task AppsInstallSilentAsync(string globalDirectory)
         {
-            const string jsonUrl = "https://salsanowfiles.work/jsons/silentapps.json";
+            // New url for silent apps due to the change to the new explorer desktop, older versions use the old url
+            const string jsonUrl = "https://salsanowfiles.work/ExplorerContents/jsons/silentapps.json";
             string silentAppsPath = Path.Combine(globalDirectory, "SilentApps");
 
             try
@@ -142,11 +160,28 @@ namespace SalsaNOW
 
                         if (app.archive == "true")
                         {
-                            if (System.IO.File.Exists(appZipPath)) return;
+                            // 1. FORCE REINSTALL OVERRIDE: 
+                            // If it's Open-Shell, we delete the directory immediately so it's always "fresh"
+                            if (app.name.Equals("Open-Shell", StringComparison.OrdinalIgnoreCase))
+                            {
+                                SafeDeleteDirectory(appFolder);
+                            }
+
+                            // 2. STANDARD GUARD:
+                            // If it's not the special app, only then do we check if it already exists
+                            else if (System.IO.File.Exists(appZipPath)) return;
+
+                            // 3. EXECUTION
                             string zip = $"{appFolder}.zip";
+
+                            // Create directory if it was deleted
+                            if (!Directory.Exists(appFolder)) Directory.CreateDirectory(appFolder);
+
                             await webClient.DownloadFileTaskAsync(new Uri(app.url), zip);
                             ZipFile.ExtractToDirectory(zip, appFolder);
                             System.IO.File.Delete(zip);
+
+                            // Only run if specifically told to
                             if (app.run == "true") Process.Start(appZipPath);
                         }
                         else
@@ -175,11 +210,61 @@ namespace SalsaNOW
         // Setup for Desktop shells and visual personalization
         public static async Task DesktopInstallAsync(string globalDirectory)
         {
-            const string jsonUrl = "https://salsanowfiles.work/jsons/desktop.json";
-            
-            // Enforce Dark Mode for Windows Apps
-            Process.Start(new ProcessStartInfo("cmd.exe", "/c reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\" /v AppsUseLightTheme /t REG_DWORD /d 0 /f") { UseShellExecute = true });
+            string defaultWallpaperDir = Path.Combine(globalDirectory, "DesktopWallpaper", "DefaultWallpaper");
+            string userWallpaperDir = Path.Combine(globalDirectory, "DesktopWallpaper");
+            const string jsonUrl = "https://salsanowfiles.work/jsons/ExplorerDesktop.json";
 
+            // 1. Enforce Dark Mode
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                {
+                    key?.SetValue("AppsUseLightTheme", 0, Microsoft.Win32.RegistryValueKind.DWord);
+                }
+            }
+            catch (Exception ex) { SalsaLogger.Error("Failed to set Dark Mode: " + ex.Message); }
+
+            // 2. Set default wallpaper from the Wallpapers user directory, if nothing is found then we apply the default wallpaper
+            if (!Directory.Exists(userWallpaperDir))
+            {
+                Directory.CreateDirectory(userWallpaperDir);
+                Directory.CreateDirectory(defaultWallpaperDir);
+
+                using (var webClient = new WebClient())
+                {
+                    await webClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/ExplorerContents/Wallpaper/WallpaperWin11.jpg"), $"{defaultWallpaperDir}\\WallpaperWin11.jpg");
+                }
+            }
+
+            string wallpaper = Directory
+                .EnumerateFiles(userWallpaperDir)
+                .FirstOrDefault(f =>
+                    SupportedExtensions.Contains(
+                        Path.GetExtension(f),
+                        StringComparer.OrdinalIgnoreCase));
+
+            if (wallpaper == null)
+            {
+                // Apply default wallpaper if no user-defined wallpaper is found
+                bool success = NativeMethods.SystemParametersInfo(
+                    SPI_SETDESKWALLPAPER,
+                    0,
+                    $"{defaultWallpaperDir}\\WallpaperWin11.jpg",
+                    SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+                );
+            }
+            else
+            {
+                // Apply user-defined wallpaper if found
+                bool success = NativeMethods.SystemParametersInfo(
+                    SPI_SETDESKWALLPAPER,
+                    0,
+                    wallpaper,
+                    SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+                );
+            }
+
+            // 3. Fetch and install desktop from remote JSON
             try
             {
                 List<DesktopInfo> desktopInfo;
@@ -189,78 +274,83 @@ namespace SalsaNOW
                     desktopInfo = JsonConvert.DeserializeObject<List<DesktopInfo>>(json);
                 }
 
-                bool skipSeelen = SalsaSettings.SkipSeelenUiExecution;
-                bool bingWall = SalsaSettings.BingWallpaperEnabled;
-
-                // Terminate original explorer shells to prepare for custom shell injection
-                IntPtr hWndSeelen = NativeMethods.FindWindow(null, "CustomExplorer");
-                if (hWndSeelen != IntPtr.Zero) NativeMethods.PostMessage(hWndSeelen, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                // Close existing shells before attempting updates
+                var processes = Process.GetProcessesByName("CustomExplorer");
+                foreach (var p in processes) p.Kill();
 
                 foreach (var desktop in desktopInfo)
                 {
                     string appDir = Path.Combine(globalDirectory, desktop.name);
-                    string zipFile = Path.Combine(globalDirectory, $"{desktop.name}.zip");
-                    string exePath = Path.Combine(appDir, desktop.exeName);
+                    string versionMarkerFile = Path.Combine(appDir, ".version");
+                    string remoteFileName = Path.GetFileName(new Uri(desktop.url).AbsolutePath);
 
-                    bool needsInstall = !Directory.Exists(appDir) || !File.Exists(exePath);
+                    bool needsInstall = !Directory.Exists(appDir) || !File.Exists(versionMarkerFile);
 
+                    // Check if current version marker matches the remote filename
+                    if (!needsInstall && File.Exists(versionMarkerFile))
+                    {
+                        string localVersion = File.ReadAllText(versionMarkerFile);
+                        if (localVersion != remoteFileName)
+                            needsInstall = true; // Version mismatch, trigger re-install
+                    }
+
+                    // Perform installation/update
                     if (needsInstall)
                     {
-                        // Clean up broken install if folder exists but exe is missing
-                        if (Directory.Exists(appDir))
-                        {
-                            try
-                            {
-                                Directory.Delete(appDir, true);
-                            }
-                            catch
-                            {
-                                // Optional: retry or log
-                            }
-                        }
+                        SafeDeleteDirectory(appDir);
+                        Directory.CreateDirectory(appDir);
 
+                        string zipFile = Path.Combine(globalDirectory, $"{desktop.name}_temp.zip");
                         using (var wc = new WebClient())
                         {
                             wc.Headers.Add("Cache-Control", "no-cache");
-                            wc.Headers.Add("Pragma", "no-cache");
-
                             await wc.DownloadFileTaskAsync(new Uri(desktop.url), zipFile);
-                            ZipFile.ExtractToDirectory(zipFile, appDir);
-                            File.Delete(zipFile);
-
-                            // Run after fresh install
-                            if (desktop.name.Contains("WinXShell"))
-                            {
-                                var psi = new ProcessStartInfo
-                                {
-                                    FileName = exePath,
-                                    WorkingDirectory = appDir
-                                };
-
-                                Process.Start(psi);
-                            }
                         }
+
+                        ZipFile.ExtractToDirectory(zipFile, appDir);
+                        if (File.Exists(zipFile)) File.Delete(zipFile);
+
+                        // Save the new version marker
+                        File.WriteAllText(versionMarkerFile, remoteFileName);
                     }
-                    else
+
+                    // Logic for specific apps (e.g., WinXShell)
+                    if (SalsaSettings.BingWallpaperEnabled)
                     {
-                        // Existing valid install
-                        if (desktop.name.Contains("WinXShell"))
+                        await DownloadBingWallpaper(userWallpaperDir);
+                    }
+
+                    // Universal Launch Logic
+                    if (string.Equals(desktop.run, "true", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Process.Start(new ProcessStartInfo
                         {
-                            if (bingWall)
-                                await DownloadBingWallpaper(appDir);
-
-                            var psi = new ProcessStartInfo
-                            {
-                                FileName = exePath,
-                                WorkingDirectory = appDir
-                            };
-
-                            Process.Start(psi);
-                        }
+                            FileName = Path.Combine(appDir, desktop.exeName),
+                            WorkingDirectory = appDir,
+                            UseShellExecute = true
+                        });
                     }
                 }
             }
             catch (Exception ex) { SalsaLogger.Error(ex.ToString()); }
+        }
+
+        private static void SafeDeleteDirectory(string path, int retries = 3)
+        {
+            if (!Directory.Exists(path)) return;
+
+            for (int i = 0; i < retries; i++)
+            {
+                try
+                {
+                    Directory.Delete(path, true);
+                    return;
+                }
+                catch
+                {
+                    System.Threading.Thread.Sleep(1000);
+                }
+            }
         }
 
         // Fetches and applies the UHD Bing Photo of the Day
@@ -273,6 +363,14 @@ namespace SalsaNOW
                     string json = await wc.DownloadStringTaskAsync("https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-AU");
                     var url = JObject.Parse(json)["images"][0]["urlbase"].ToString();
                     await wc.DownloadFileTaskAsync(new Uri($"https://www.bing.com{url}_UHD.jpg"), Path.Combine(dir, "wallpaper.jpg"));
+
+                    // Apply bing wallpaper as the desktop background at users request from config file
+                    bool success = NativeMethods.SystemParametersInfo(
+                        SPI_SETDESKWALLPAPER,
+                        0,
+                        Path.Combine(dir, "wallpaper.jpg"),
+                        SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+                    );
                 }
             }
             catch { }

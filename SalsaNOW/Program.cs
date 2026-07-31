@@ -17,7 +17,7 @@ namespace SalsaNOW
 
         static async Task Main(string[] args)
         {
-            Console.Title = "SalsaNOW V1.6.6-hotfix1 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.7 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -27,7 +27,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.5");
+            Console.WriteLine("SalsaNOW V1.6.7");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 

@@ -30,7 +30,6 @@ namespace SalsaNOW
             }
 
             // Ensure settings exist (default = 0)
-            EnsureLine("SkipSeelenUiExecution");
             EnsureLine("BingPhotoOfTheDayWallpaper");
             EnsureLine("SteamSilentLaunch");
 

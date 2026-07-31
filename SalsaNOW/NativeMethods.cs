@@ -53,5 +53,16 @@ namespace SalsaNOW
 
         [DllImport("kernel32.dll")]
         public static extern IntPtr GetConsoleWindow();
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        internal static extern bool SystemParametersInfo(
+            uint uiAction,
+            uint uiParam,
+            string pvParam,
+            uint fWinIni);
+
+        const uint SPI_SETDESKWALLPAPER = 0x0014;
+        const uint SPIF_UPDATEINIFILE = 0x01;
+        const uint SPIF_SENDCHANGE = 0x02;
     }
 }
