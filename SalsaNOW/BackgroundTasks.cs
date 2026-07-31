@@ -302,5 +302,92 @@ namespace SalsaNOW
                 }
             });
         }
+
+        public static async Task EnvironmentSetup(CancellationToken token)
+        {
+            string dotnetRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Microsoft",
+                "dotnet");
+
+            string powershellRoot = @"I:\Apps\SalsaNOW\SilentApps\PowerShell";
+
+            while (!token.IsCancellationRequested)
+            {
+                // Set the user variables
+                Environment.SetEnvironmentVariable(
+                    "DOTNET_ROOT",
+                    dotnetRoot,
+                    EnvironmentVariableTarget.User);
+
+                Environment.SetEnvironmentVariable(
+                    "POWERSHELL_ROOT",
+                    powershellRoot,
+                    EnvironmentVariableTarget.User);
+
+                AddToUserPath(dotnetRoot);
+                AddToUserPath(powershellRoot);
+
+                // Verify
+                string userPath = Environment.GetEnvironmentVariable(
+                    "Path",
+                    EnvironmentVariableTarget.User) ?? string.Empty;
+
+                bool success =
+                    string.Equals(
+                        Environment.GetEnvironmentVariable(
+                            "DOTNET_ROOT",
+                            EnvironmentVariableTarget.User),
+                        dotnetRoot,
+                        StringComparison.OrdinalIgnoreCase)
+                    &&
+                    string.Equals(
+                        Environment.GetEnvironmentVariable(
+                            "POWERSHELL_ROOT",
+                            EnvironmentVariableTarget.User),
+                        powershellRoot,
+                        StringComparison.OrdinalIgnoreCase)
+                    &&
+                    ContainsPath(userPath, dotnetRoot)
+                    &&
+                    ContainsPath(userPath, powershellRoot);
+
+                if (success)
+                    return;
+
+                await Task.Delay(500, token);
+            }
+
+            token.ThrowIfCancellationRequested();
+        }
+
+        private static void AddToUserPath(string directory)
+        {
+            string currentPath = Environment.GetEnvironmentVariable(
+                "Path",
+                EnvironmentVariableTarget.User) ?? string.Empty;
+
+            if (!ContainsPath(currentPath, directory))
+            {
+                string newPath = string.IsNullOrEmpty(currentPath)
+                    ? directory
+                    : currentPath + ";" + directory;
+
+                Environment.SetEnvironmentVariable(
+                    "Path",
+                    newPath,
+                    EnvironmentVariableTarget.User);
+            }
+        }
+
+        private static bool ContainsPath(string path, string directory)
+        {
+            return path
+                .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Any(p => string.Equals(
+                    p.TrimEnd('\\'),
+                    directory.TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase));
+        }
     }
 }

@@ -82,6 +82,7 @@ namespace SalsaNOW
             _ = BackgroundTasks.StartTerminateGFNExplorerShellAsync(cts.Token);
             _ = BackgroundTasks.StartEacWatcherAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
+            _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
 
             // Execute deployment modules
             await AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath);
@@ -89,6 +90,8 @@ namespace SalsaNOW
             await AppInstaller.AppsInstallSilentAsync(globalDirectory);
 
             await SteamManager.ShutdownServerAsync(globalDirectory);
+
+            await BackgroundTasks.EnvironmentSetup(cts.Token);
 
             // Apply Nvidia optimizations always
             NvidiaManager.EnableRTX();
