@@ -1,0 +1,1 @@
+SalsaNOW Steam asset export generated from the supplied banner. Check every crop in Steamworks asset preview before upload. Generated files follow current commonly required Steamworks dimensions including capsules, library, community/client icons, events, and optional background/banner assets.
