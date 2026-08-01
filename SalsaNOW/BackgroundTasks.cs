@@ -402,7 +402,7 @@ namespace SalsaNOW
 
         public static async Task OpenShellStartup(string globalDirectory)
         {
-            await Task.Delay(2000); // Wait for the system to stabilize before launching Open-Shell
+            await Task.Delay(15000); // Wait for the system to stabilize before launching Open-Shell
 
             Process.Start($"{globalDirectory}\\SilentApps\\Open-Shell\\StartMenu.exe");
         }
