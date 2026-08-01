@@ -48,4 +48,16 @@ namespace SalsaNOW
         public string urlbase { get; set; }
         public string copyright { get; set; }
     }
+
+    public class RegistryBackupConfig
+    {
+        public int BackupIntervalSeconds { get; set; } = 5;
+        public List<RegistryEntry> RegistryKeys { get; set; } = new List<RegistryEntry>();
+    }
+
+    public class RegistryEntry
+    {
+        public string Key { get; set; }
+        public string File { get; set; }
+    }
 }

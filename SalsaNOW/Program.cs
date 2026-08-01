@@ -17,7 +17,7 @@ namespace SalsaNOW
 
         static async Task Main(string[] args)
         {
-            Console.Title = "SalsaNOW V1.6.7 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.7.1 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -27,7 +27,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.7");
+            Console.WriteLine("SalsaNOW V1.6.7.1");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
@@ -77,21 +77,24 @@ namespace SalsaNOW
             // Load configuration once to share settings across modules
             SalsaSettings.Load(globalDirectory);
 
+            _ = Task.Run(() => BackgroundTasks.EnvironmentSetup());
+
+            _ = AutoPersist.BackupDesktopRegistry(cts.Token, globalDirectory);
+
             // Fire and forget non-blocking background services
             _ = BackgroundTasks.StartShortcutsSavingAsync(globalDirectory, cts.Token);
             _ = BackgroundTasks.StartTerminateGFNExplorerShellAsync(cts.Token);
             _ = BackgroundTasks.StartEacWatcherAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
+            _ = AutoPersist.BackupDesktopRegistry(cts.Token, globalDirectory);
 
             // Execute deployment modules
             await AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath);
-            await AppInstaller.DesktopInstallAsync(globalDirectory);
             await AppInstaller.AppsInstallSilentAsync(globalDirectory);
+            await AppInstaller.DesktopInstallAsync(globalDirectory);
 
             await SteamManager.ShutdownServerAsync(globalDirectory);
-
-            await BackgroundTasks.EnvironmentSetup(cts.Token);
 
             // Apply Nvidia optimizations always
             NvidiaManager.EnableRTX();

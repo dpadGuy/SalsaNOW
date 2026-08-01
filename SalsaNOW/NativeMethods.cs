@@ -61,6 +61,20 @@ namespace SalsaNOW
             string pvParam,
             uint fWinIni);
 
+        public const int HWND_BROADCAST = 0xffff;
+        public const uint WM_SETTINGCHANGE = 0x001A;
+        public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        public static extern IntPtr SendMessageTimeout(
+            IntPtr hWnd,
+            uint Msg,
+            IntPtr wParam,
+            string lParam,
+            uint fuFlags,
+            uint uTimeout,
+            out IntPtr lpdwResult);
+
         const uint SPI_SETDESKWALLPAPER = 0x0014;
         const uint SPIF_UPDATEINIFILE = 0x01;
         const uint SPIF_SENDCHANGE = 0x02;

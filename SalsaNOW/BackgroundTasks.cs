@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -303,81 +304,89 @@ namespace SalsaNOW
             });
         }
 
-        public static async Task EnvironmentSetup(CancellationToken token)
+        public static void EnvironmentSetup()
         {
-            string dotnetRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Microsoft",
-                "dotnet");
-
-            string powershellRoot = @"I:\Apps\SalsaNOW\SilentApps\PowerShell";
-
-            while (!token.IsCancellationRequested)
+            try
             {
-                // Set the user variables
-                Environment.SetEnvironmentVariable(
-                    "DOTNET_ROOT",
-                    dotnetRoot,
-                    EnvironmentVariableTarget.User);
+                SalsaLogger.Info("Setting up environment variables...");
 
-                Environment.SetEnvironmentVariable(
-                    "POWERSHELL_ROOT",
-                    powershellRoot,
-                    EnvironmentVariableTarget.User);
+                string dotnetRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Microsoft",
+                    "dotnet");
 
-                AddToUserPath(dotnetRoot);
-                AddToUserPath(powershellRoot);
+                string powershellRoot = @"I:\Apps\SalsaNOW\SilentApps\PowerShell";
 
-                // Verify
-                string userPath = Environment.GetEnvironmentVariable(
-                    "Path",
-                    EnvironmentVariableTarget.User) ?? string.Empty;
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey("Environment"))
+                {
+                    if (key == null)
+                    {
+                        SalsaLogger.Error("Could not open HKCU\\Environment.");
+                        return;
+                    }
 
-                bool success =
-                    string.Equals(
-                        Environment.GetEnvironmentVariable(
-                            "DOTNET_ROOT",
-                            EnvironmentVariableTarget.User),
-                        dotnetRoot,
-                        StringComparison.OrdinalIgnoreCase)
-                    &&
-                    string.Equals(
-                        Environment.GetEnvironmentVariable(
-                            "POWERSHELL_ROOT",
-                            EnvironmentVariableTarget.User),
-                        powershellRoot,
-                        StringComparison.OrdinalIgnoreCase)
-                    &&
-                    ContainsPath(userPath, dotnetRoot)
-                    &&
-                    ContainsPath(userPath, powershellRoot);
+                    key.SetValue("DOTNET_ROOT", dotnetRoot, RegistryValueKind.String);
+                    key.SetValue("POWERSHELL_ROOT", powershellRoot, RegistryValueKind.String);
 
-                if (success)
-                    return;
+                    string path = key.GetValue("Path", "").ToString();
+                    path = AddPathIfMissing(path, dotnetRoot);
+                    path = AddPathIfMissing(path, powershellRoot);
 
-                await Task.Delay(500, token);
+                    key.SetValue("Path", path, RegistryValueKind.ExpandString);
+                    key.Flush();
+                }
+
+                SalsaLogger.Info("Registry updated.");
+
+                // Update current process
+                Environment.SetEnvironmentVariable("DOTNET_ROOT", dotnetRoot);
+                Environment.SetEnvironmentVariable("POWERSHELL_ROOT", powershellRoot);
+
+                string currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+                currentPath = AddPathIfMissing(currentPath, dotnetRoot);
+                currentPath = AddPathIfMissing(currentPath, powershellRoot);
+
+                Environment.SetEnvironmentVariable("PATH", currentPath);
+
+                SalsaLogger.Info("Current process environment updated.");
+
+                IntPtr result;
+                NativeMethods.SendMessageTimeout(
+                    (IntPtr)NativeMethods.HWND_BROADCAST,
+                    NativeMethods.WM_SETTINGCHANGE,
+                    IntPtr.Zero,
+                    "Environment",
+                    NativeMethods.SMTO_ABORTIFHUNG,
+                    5000,
+                    out result);
+
+                SalsaLogger.Info("Environment change broadcast sent.");
+
+                using (RegistryKey verify = Registry.CurrentUser.OpenSubKey("Environment"))
+                {
+                    SalsaLogger.Info("Verification:");
+                    SalsaLogger.Info("DOTNET_ROOT = " + verify.GetValue("DOTNET_ROOT", ""));
+                    SalsaLogger.Info("POWERSHELL_ROOT = " + verify.GetValue("POWERSHELL_ROOT", ""));
+                }
+
+                SalsaLogger.Info("Environment setup complete.");
             }
-
-            token.ThrowIfCancellationRequested();
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("Environment setup failed: " + ex.Message);
+                SalsaLogger.Error(ex.StackTrace ?? "");
+            }
         }
 
-        private static void AddToUserPath(string directory)
+        private static string AddPathIfMissing(string currentPath, string directory)
         {
-            string currentPath = Environment.GetEnvironmentVariable(
-                "Path",
-                EnvironmentVariableTarget.User) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(currentPath))
+                return directory;
 
-            if (!ContainsPath(currentPath, directory))
-            {
-                string newPath = string.IsNullOrEmpty(currentPath)
-                    ? directory
-                    : currentPath + ";" + directory;
+            if (ContainsPath(currentPath, directory))
+                return currentPath;
 
-                Environment.SetEnvironmentVariable(
-                    "Path",
-                    newPath,
-                    EnvironmentVariableTarget.User);
-            }
+            return currentPath.TrimEnd(';') + ";" + directory;
         }
 
         private static bool ContainsPath(string path, string directory)
