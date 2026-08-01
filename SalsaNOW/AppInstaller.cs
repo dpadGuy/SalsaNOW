@@ -333,36 +333,10 @@ namespace SalsaNOW
                             WorkingDirectory = appDir,
                             UseShellExecute = true
                         });
-
-                        await WaitForExplorerShellAsync(globalDirectory);
                     }
                 }
             }
             catch (Exception ex) { SalsaLogger.Error(ex.ToString()); }
-        }
-
-        public static async Task WaitForExplorerShellAsync(string globalDirectory, int timeoutSeconds = 60)
-        {
-            SalsaLogger.Info("Waiting for Shell_TrayWnd...");
-
-            DateTime timeout = DateTime.Now.AddSeconds(timeoutSeconds);
-
-            while (DateTime.Now < timeout)
-            {
-                IntPtr hwnd = NativeMethods.FindWindow("Shell_TrayWnd", null);
-
-                if (hwnd != IntPtr.Zero)
-                {
-                    SalsaLogger.Info("Shell_TrayWnd detected.");
-
-                    Process.Start($"{globalDirectory}\\SilentApps\\Open-Shell\\StartMenu.exe");
-                    return;
-                }
-
-                await Task.Delay(500);
-            }
-
-            SalsaLogger.Warn("Shell_TrayWnd was not detected before timeout.");
         }
 
         private static void SafeDeleteDirectory(string path, int retries = 3)

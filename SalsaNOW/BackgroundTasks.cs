@@ -1,6 +1,7 @@
 using Microsoft.Win32;
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -397,6 +398,13 @@ namespace SalsaNOW
                     p.TrimEnd('\\'),
                     directory.TrimEnd('\\'),
                     StringComparison.OrdinalIgnoreCase));
+        }
+
+        public static async Task OpenShellStartup(string globalDirectory)
+        {
+            await Task.Delay(2000); // Wait for the system to stabilize before launching Open-Shell
+
+            Process.Start($"{globalDirectory}\\SilentApps\\Open-Shell\\StartMenu.exe");
         }
     }
 }

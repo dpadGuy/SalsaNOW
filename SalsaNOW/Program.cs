@@ -87,7 +87,6 @@ namespace SalsaNOW
             _ = BackgroundTasks.StartEacWatcherAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
-            _ = AutoPersist.BackupDesktopRegistry(cts.Token, globalDirectory);
 
             // Execute deployment modules
             await AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath);
@@ -100,6 +99,8 @@ namespace SalsaNOW
             NvidiaManager.EnableRTX();
 
             NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
+
+            await BackgroundTasks.OpenShellStartup(globalDirectory);
 
             _ = SteamManager.SetupGameSavesAsync(globalDirectory);
             
