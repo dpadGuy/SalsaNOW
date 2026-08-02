@@ -77,6 +77,12 @@ namespace SalsaNOW
                     usg = Process.Start(usgMask);
                 }
 
+                await Task.Delay(500); // Wait for the process to start
+
+                // Start Startup Batch file if user has it available
+                string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
+                if (File.Exists(batch)) Process.Start(new ProcessStartInfo { FileName = batch, UseShellExecute = true });
+
                 if (usg != null) { while (!usg.HasExited) await Task.Delay(1000); }
                 await Task.Delay(200);
                 if (File.Exists(usgMask)) File.Delete(usgMask);
