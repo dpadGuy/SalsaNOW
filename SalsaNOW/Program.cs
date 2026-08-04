@@ -17,7 +17,7 @@ namespace SalsaNOW
 
         static async Task Main(string[] args)
         {
-            Console.Title = "SalsaNOW V1.6.7.1-hotfix2 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.7.1-hotfix3 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -27,7 +27,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.7.1-hotfix2");
+            Console.WriteLine("SalsaNOW V1.6.7.1-hotfix3");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
@@ -88,6 +88,8 @@ namespace SalsaNOW
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
 
+            await SteamManager.SetupGameSavesAsync(globalDirectory);
+
             // Execute deployment modules
             await AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath);
             await AppInstaller.AppsInstallSilentAsync(globalDirectory);
@@ -101,8 +103,6 @@ namespace SalsaNOW
             NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
 
             await BackgroundTasks.OpenShellStartup(globalDirectory);
-
-            _ = SteamManager.SetupGameSavesAsync(globalDirectory);
 
             try { await Task.Delay(Timeout.Infinite, cts.Token); } catch (TaskCanceledException) { }
         }
