@@ -18,8 +18,8 @@ namespace SalsaNOW
         [STAThread]
         static async Task Main(string[] args)
         {
-            // We first detach from steam in order to make steam not watch our process anymore, it is mandatory to ensure functionality for other apps.
-            SteamDetach.RelaunchIfNeeded(args);
+            // Clean steam environment before everything.
+            SteamDetach.RemoveSteamEnvironments();
 
             Console.Title = "SalsaNOW V1.6.7.2 - by dpadGuy";
 
@@ -95,12 +95,12 @@ namespace SalsaNOW
 
             await SteamManager.SetupGameSavesAsync(globalDirectory);
 
+            _ = SteamManager.ShutdownServerAsync(globalDirectory);
+
             // Execute deployment modules
             await AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath);
             await AppInstaller.AppsInstallSilentAsync(globalDirectory);
             await AppInstaller.DesktopInstallAsync(globalDirectory);
-
-            _ = SteamManager.ShutdownServerAsync(globalDirectory);
 
             // Apply Nvidia optimizations always
             NvidiaManager.EnableRTX();
