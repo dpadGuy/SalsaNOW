@@ -19,6 +19,7 @@ namespace SalsaNOW
         static async Task Main(string[] args)
         {
             // Clean steam environment before everything.
+            // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
             Console.Title = "SalsaNOW V1.6.7.2 - by dpadGuy";
