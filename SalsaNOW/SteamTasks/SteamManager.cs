@@ -25,7 +25,6 @@ namespace SalsaNOW
                 string destinationDir = @"C:\Program Files (x86)\Steam\steamui";
 
                 string cache = @"C:\Program Files (x86)\Steam\appcache";
-                if (Directory.Exists(cache)) Directory.Delete(cache, true);
 
                 await DisableSteamInput();
 
@@ -78,6 +77,8 @@ namespace SalsaNOW
                 }
 
                 await Task.Delay(500); // Wait for the process to start
+
+                if (Directory.Exists(cache)) Directory.Delete(cache, true);
 
                 // Start Startup Batch file if user has it available
                 string batch = Path.Combine(globalDirectory, "StartupBatch.bat");

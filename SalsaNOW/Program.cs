@@ -15,9 +15,13 @@ namespace SalsaNOW
         private static readonly CancellationTokenSource cts = new CancellationTokenSource();
         private static string customAppsJsonPath = null;
 
+        [STAThread]
         static async Task Main(string[] args)
         {
-            Console.Title = "SalsaNOW V1.6.7.1-hotfix3 - by dpadGuy";
+            // We first detach from steam in order to make steam not watch our process anymore, it is mandatory to ensure functionality for other apps.
+            SteamDetach.RelaunchIfNeeded(args);
+
+            Console.Title = "SalsaNOW V1.6.7.2 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -27,7 +31,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.7.1-hotfix3");
+            Console.WriteLine("SalsaNOW V1.6.7.2");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
@@ -79,13 +83,14 @@ namespace SalsaNOW
 
             _ = Task.Run(() => BackgroundTasks.EnvironmentSetup());
 
+            // Apply registry changes and backup desktop registry
             _ = AutoPersist.BackupDesktopRegistry(cts.Token, globalDirectory);
+            _ = AutoPersist.ApplyCustomRegistryFiles(globalDirectory);
 
             // Fire and forget non-blocking background services
             _ = BackgroundTasks.StartShortcutsSavingAsync(globalDirectory, cts.Token);
             _ = BackgroundTasks.StartTerminateGFNExplorerShellAsync(cts.Token);
             _ = BackgroundTasks.StartEacWatcherAsync(cts.Token);
-            _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
 
             await SteamManager.SetupGameSavesAsync(globalDirectory);

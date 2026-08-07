@@ -110,7 +110,8 @@
     <Compile Include="RecoveryMode.cs" />
     <Compile Include="SalsaLogger.cs" />
     <Compile Include="SalsaSettings.cs" />
-    <Compile Include="SteamManager.cs" />
+    <Compile Include="SteamTasks\SteamDetach.cs" />
+    <Compile Include="SteamTasks\SteamManager.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />

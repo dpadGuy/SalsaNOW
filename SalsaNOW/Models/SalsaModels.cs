@@ -60,4 +60,10 @@ namespace SalsaNOW
         public string Key { get; set; }
         public string File { get; set; }
     }
+
+    public class RegistryFile
+    {
+        public string File { get; set; }
+        public string Url { get; set; }
+    }
 }

@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.Win32;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -105,6 +106,49 @@ namespace SalsaNOW
                         SalsaLogger.Error("Registry backup loop failed: " + ex.Message);
 
                         await Task.Delay(TimeSpan.FromSeconds(5), token);
+                    }
+                }
+            }
+        }
+
+        public static async Task ApplyCustomRegistryFiles(string globalDirectory)
+        {
+            const string jsonUrl =
+                "https://salsanowfiles.work/ExplorerContents/jsons/RegistryFiles.json";
+
+            string downloadDir = Path.Combine(globalDirectory, "RegistryFiles");
+            Directory.CreateDirectory(downloadDir);
+
+            using (WebClient client = new WebClient())
+            {
+                string json = await client.DownloadStringTaskAsync(jsonUrl);
+
+                var files =
+                    JsonConvert.DeserializeObject<List<RegistryFile>>(json);
+
+                if (files == null)
+                    return;
+
+                foreach (RegistryFile entry in files)
+                {
+                    string regFile = Path.Combine(
+                        downloadDir,
+                        Path.GetFileName(entry.File));
+
+                    await client.DownloadFileTaskAsync(
+                        entry.Url,
+                        regFile);
+
+                    using (Process process = Process.Start(
+                        new ProcessStartInfo
+                        {
+                            FileName = "reg.exe",
+                            Arguments = "import \"" + regFile + "\"",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }))
+                    {
+                        process?.WaitForExit();
                     }
                 }
             }
