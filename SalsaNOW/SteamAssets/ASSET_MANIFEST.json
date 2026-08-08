@@ -1,0 +1,198 @@
+{
+  "source_image": "68747470733a2f2f73616c73616e6f7766696c65732e776f726b2f5265706f496d616765732f53616c73614e4f575f42616e6e65722e706e67.png",
+  "source_size": [
+    1920,
+    400
+  ],
+  "assets": [
+    {
+      "file": "store_header_capsule_920x430.png",
+      "width": 920,
+      "height": 430,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "store_small_capsule_462x174.png",
+      "width": 462,
+      "height": 174,
+      "format": "PNG",
+      "mode": "contain"
+    },
+    {
+      "file": "store_small_capsule_generated_184x69.png",
+      "width": 184,
+      "height": 69,
+      "format": "PNG",
+      "mode": "contain"
+    },
+    {
+      "file": "store_small_capsule_generated_120x45.png",
+      "width": 120,
+      "height": 45,
+      "format": "PNG",
+      "mode": "contain"
+    },
+    {
+      "file": "store_main_capsule_1232x706.png",
+      "width": 1232,
+      "height": 706,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "store_vertical_capsule_748x896.png",
+      "width": 748,
+      "height": 896,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "store_page_background_1438x810.png",
+      "width": 1438,
+      "height": 810,
+      "format": "PNG",
+      "mode": "background"
+    },
+    {
+      "file": "library_capsule_600x900.png",
+      "width": 600,
+      "height": 900,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "library_hero_3840x1240.png",
+      "width": 3840,
+      "height": 1240,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "library_header_capsule_920x430.png",
+      "width": 920,
+      "height": 430,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "event_cover_800x450.png",
+      "width": 800,
+      "height": 450,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "event_header_1920x622.png",
+      "width": 1920,
+      "height": 622,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "community_group_header_460x215.png",
+      "width": 460,
+      "height": 215,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "developer_page_background_1500x220.png",
+      "width": 1500,
+      "height": 220,
+      "format": "PNG",
+      "mode": "contain"
+    },
+    {
+      "file": "steam_broadcast_155x337.png",
+      "width": 155,
+      "height": 337,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "about_section_banner_616x353.png",
+      "width": 616,
+      "height": 353,
+      "format": "PNG",
+      "mode": "compose"
+    },
+    {
+      "file": "library_logo_1280x720_transparent.png",
+      "width": 1280,
+      "height": 720,
+      "format": "PNG",
+      "mode": "transparent logo"
+    },
+    {
+      "file": "library_logo_1280wide_transparent.png",
+      "width": 1280,
+      "height": 360,
+      "format": "PNG",
+      "mode": "transparent logo"
+    },
+    {
+      "file": "icon_32x32.png",
+      "width": 32,
+      "height": 32,
+      "format": "PNG",
+      "mode": "lime icon"
+    },
+    {
+      "file": "icon_64x64.png",
+      "width": 64,
+      "height": 64,
+      "format": "PNG",
+      "mode": "lime icon"
+    },
+    {
+      "file": "icon_128x128.png",
+      "width": 128,
+      "height": 128,
+      "format": "PNG",
+      "mode": "lime icon"
+    },
+    {
+      "file": "icon_184x184.png",
+      "width": 184,
+      "height": 184,
+      "format": "PNG",
+      "mode": "lime icon"
+    },
+    {
+      "file": "icon_256x256.png",
+      "width": 256,
+      "height": 256,
+      "format": "PNG",
+      "mode": "lime icon"
+    },
+    {
+      "file": "icon_512x512.png",
+      "width": 512,
+      "height": 512,
+      "format": "PNG",
+      "mode": "lime icon"
+    },
+    {
+      "file": "icon_1024x1024.png",
+      "width": 1024,
+      "height": 1024,
+      "format": "PNG",
+      "mode": "lime icon"
+    },
+    {
+      "file": "app_icon_184x184.jpg",
+      "width": 184,
+      "height": 184,
+      "format": "JPG",
+      "mode": "Steam app icon"
+    },
+    {
+      "file": "shortcut_icon_multi_size.ico",
+      "width": "16-256",
+      "height": "16-256",
+      "format": "ICO",
+      "mode": "multi-size icon"
+    }
+  ]
+}
