@@ -1,6 +1,6 @@
 ![SalsaNOW_Banner](https://salsanowfiles.work/RepoImages/SalsaNOW_Banner.png)
 
-**Updater exe: http://salsa.salsanowfiles.work/**
+**Updater exe: https://salsa.salsanowfiles.work/**
 
 **Documentation Website: https://documentation.salsanowfiles.work**
 
