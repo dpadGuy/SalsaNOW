@@ -125,6 +125,16 @@ namespace SalsaNOW
                 return;
             }
 
+            // sanity check, dont want to accidentally nuke C:\
+            // The directory comes from a remote JSON; never blindly recurse-delete it.
+            if (string.IsNullOrWhiteSpace(globalDirectory) ||
+                globalDirectory.TrimEnd('\\', '/').Length <= 3) // e.g. "C:\" root
+            {
+                SalsaLogger.Error("Refusing factory reset: resolved globalDirectory is null, empty, or a drive root ('" + globalDirectory + "').");
+                Thread.Sleep(3000);
+                return;
+            }
+
             Directory.Delete(globalDirectory, true);
 
             Console.Clear();

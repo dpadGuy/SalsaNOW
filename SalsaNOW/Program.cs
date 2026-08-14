@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            Console.Title = "SalsaNOW V1.6.7.2 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.7.3 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -32,7 +32,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.7.2");
+            Console.WriteLine("SalsaNOW V1.6.7.3");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
@@ -103,8 +103,12 @@ namespace SalsaNOW
             await AppInstaller.AppsInstallSilentAsync(globalDirectory);
             await AppInstaller.DesktopInstallAsync(globalDirectory);
 
-            // Apply Nvidia optimizations always
-            NvidiaManager.EnableRTX();
+            // Apply Nvidia optimizations always.
+            // Harden: RTX enablement runs against vendor drivers and can throw if the
+            // GPU/NvAPI is unavailable in the GFN sandbox; wrap it so a driver failure
+            // never aborts the rest of startup.
+            try { NvidiaManager.EnableRTX(); }
+            catch (Exception ex) { SalsaLogger.Error("NVIDIA optimization failed: " + ex.Message); }
 
             NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
 

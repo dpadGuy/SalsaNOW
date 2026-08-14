@@ -30,7 +30,8 @@ namespace SalsaNOW
                     {
                         var runningProcs = Process.GetProcessesByName(processName);
 
-                        if (runningProcs.Length == 0) break;
+                        // keep going, NVIDIA could change process names anytime
+                        if (runningProcs.Length == 0) continue;
 
                         foreach (var proc in runningProcs)
                         {
@@ -195,7 +196,13 @@ namespace SalsaNOW
                 while (!token.IsCancellationRequested)
                 {
                     await Task.Delay(500, token);
-                    IntPtr windowPtr = NativeMethods.FindWindowByCaption(IntPtr.Zero, "CustomExplorer");
+                    // try dynamic detection first, fall back to the old hardcoded name
+                    // enumeration instead of a hardcoded caption; fall back to the legacy
+                    // "CustomExplorer" caption if the detector returns nothing so we never
+                    // regress against the original behavior.
+                    IntPtr windowPtr = GfnShellDetector.FindShellWindow();
+                    if (windowPtr == IntPtr.Zero)
+                        windowPtr = NativeMethods.FindWindowByCaption(IntPtr.Zero, "CustomExplorer");
                     if (windowPtr != IntPtr.Zero)
                     {
                         NativeMethods.SendMessage(windowPtr, NativeMethods.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
@@ -287,8 +294,12 @@ namespace SalsaNOW
 
                             SalsaLogger.Error("STEAM LAUNCH OPTIONS DETECTED. Session terminated.");
 
+                            // dispose before they pile up
                             foreach (var p in Process.GetProcessesByName("steam"))
-                                p.Kill();
+                            {
+                                try { p.Kill(); } catch { }
+                                p.Dispose();
+                            }
                         }
 
                         return;

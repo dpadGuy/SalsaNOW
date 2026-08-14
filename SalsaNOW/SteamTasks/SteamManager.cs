@@ -26,6 +26,14 @@ namespace SalsaNOW
 
                 string cache = @"C:\Program Files (x86)\Steam\appcache";
 
+                // clear appcache BEFORE swapping the chunk, otherwise Steam uses
+                // the cached version and ignores our patch
+                if (Directory.Exists(cache))
+                {
+                    try { Directory.Delete(cache, true); }
+                    catch (Exception cex) { SalsaLogger.Warn("appcache delete failed: " + cex.Message); }
+                }
+
                 await DisableSteamInput();
 
                 Process.Start(new ProcessStartInfo
@@ -36,7 +44,9 @@ namespace SalsaNOW
                     CreateNoWindow = true
                 })?.WaitForExit();
 
-                File.Delete(@"C:\Program Files (x86)\Steam\steamuiOG\chunk~2dcc5aaf7.js");
+                // find the chunk dynamically, NVIDIA might rotate it to break us
+                string chunkName = SteamChunkDetector.DetectChunk();
+                File.Delete(Path.Combine(@"C:\Program Files (x86)\Steam\steamuiOG", chunkName));
 
                 Process.Start(new ProcessStartInfo
                 {
@@ -54,11 +64,12 @@ namespace SalsaNOW
                     CreateNoWindow = true
                 })?.WaitForExit();
 
-                using (var wc = new WebClient()) await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/chunk~2dcc5aaf7.js"), destinationDir + "\\chunk~2dcc5aaf7.js");
+                // download via SalsaMirror so they cant kill it by blocking one domain
+                await SalsaMirror.DownloadFileAsync("/USG/" + chunkName, Path.Combine(destinationDir, chunkName));
 
                 // Steam USG Bypass Part (Temporary until patch discovered)
 
-                using (var wc = new WebClient()) await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/bleh.exe"), usgMask);
+                await SalsaMirror.DownloadFileAsync("/USG/bleh.exe", usgMask);
 
                 Process usg = null;
 
@@ -77,8 +88,6 @@ namespace SalsaNOW
                 }
 
                 await Task.Delay(500); // Wait for the process to start
-
-                if (Directory.Exists(cache)) Directory.Delete(cache, true);
 
                 // Start Startup Batch file if user has it available
                 string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
