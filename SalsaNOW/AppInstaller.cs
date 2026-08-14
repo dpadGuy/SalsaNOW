@@ -274,9 +274,13 @@ namespace SalsaNOW
                     desktopInfo = JsonConvert.DeserializeObject<List<DesktopInfo>>(json);
                 }
 
-                // Close existing shells before attempting updates
+                // Close existing shells before attempting updates.
+                // try the dynamic detector first
+                // fall back to the hardcoded "CustomExplorer" name for legacy compatibility.
                 var processes = Process.GetProcessesByName("CustomExplorer");
-                foreach (var p in processes) p.Kill();
+                var detected = GfnShellDetector.FindShellProcess();
+                if (detected != null && processes.All(p => p.Id != detected.Id)) processes = processes.Concat(new[] { detected }).ToArray();
+                foreach (var p in processes) { try { p.Kill(); } catch { } p.Dispose(); }
 
                 foreach (var desktop in desktopInfo)
                 {

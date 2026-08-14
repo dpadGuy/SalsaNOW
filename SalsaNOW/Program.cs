@@ -103,8 +103,12 @@ namespace SalsaNOW
             await AppInstaller.AppsInstallSilentAsync(globalDirectory);
             await AppInstaller.DesktopInstallAsync(globalDirectory);
 
-            // Apply Nvidia optimizations always
-            NvidiaManager.EnableRTX();
+            // Apply Nvidia optimizations always.
+            // Harden: RTX enablement runs against vendor drivers and can throw if the
+            // GPU/NvAPI is unavailable in the GFN sandbox; wrap it so a driver failure
+            // never aborts the rest of startup.
+            try { NvidiaManager.EnableRTX(); }
+            catch (Exception ex) { SalsaLogger.Error("NVIDIA optimization failed: " + ex.Message); }
 
             NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
 
