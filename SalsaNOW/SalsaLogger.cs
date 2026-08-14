@@ -10,6 +10,9 @@ namespace SalsaNOW
     {
         private static string _logFilePath;
 
+        // lock this, multiple threads hit the logger at once
+        private static readonly object _lock = new object();
+
         // Initializes the local log file in the global directory
         public static void Initialize(string globalDirectory)
         {
@@ -35,8 +38,12 @@ namespace SalsaNOW
 
             if (!string.IsNullOrEmpty(_logFilePath))
             {
-                try { File.AppendAllText(_logFilePath, $"[{DateTime.Now:HH:mm:ss}] {prefix} {message}\n"); }
-                catch { } 
+                // dont hold the lock longer than needed
+                lock (_lock)
+                {
+                    try { File.AppendAllText(_logFilePath, $"[{DateTime.Now:HH:mm:ss}] {prefix} {message}\n"); }
+                    catch { }
+                }
             }
         }
 

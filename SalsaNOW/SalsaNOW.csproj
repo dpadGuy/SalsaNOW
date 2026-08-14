@@ -62,7 +62,7 @@
     <ManifestKeyFile>SalsaNOW_TemporaryKey.pfx</ManifestKeyFile>
   </PropertyGroup>
   <PropertyGroup>
-    <GenerateManifests>true</GenerateManifests>
+    <GenerateManifests>false</GenerateManifests>
   </PropertyGroup>
   <PropertyGroup>
     <SignManifests>false</SignManifests>
@@ -109,6 +109,10 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RecoveryMode.cs" />
     <Compile Include="SalsaLogger.cs" />
+    <!-- Hardening: new resilience/detection modules -->
+    <Compile Include="SalsaMirror.cs" />
+    <Compile Include="GfnShellDetector.cs" />
+    <Compile Include="SteamChunkDetector.cs" />
     <Compile Include="SalsaSettings.cs" />
     <Compile Include="SteamTasks\SteamDetach.cs" />
     <Compile Include="SteamTasks\SteamManager.cs" />
@@ -118,15 +122,9 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <COMReference Include="IWshRuntimeLibrary">
-      <Guid>{F935DC20-1CF0-11D0-ADB9-00C04FD58A0B}</Guid>
-      <VersionMajor>1</VersionMajor>
-      <VersionMinor>0</VersionMinor>
-      <Lcid>0</Lcid>
-      <WrapperTool>tlbimp</WrapperTool>
-      <Isolated>False</Isolated>
-      <EmbedInteropTypes>True</EmbedInteropTypes>
-    </COMReference>
+    <Reference Include="IWshRuntimeLibrary">
+      <HintPath>mono-build\IWshRuntimeLibrary.dll</HintPath>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <Content Include="SalsaNOWLimeIcon.ico" />
@@ -153,5 +151,4 @@
     <Error Condition="!Exists('..\packages\Costura.Fody.6.2.0\build\Costura.Fody.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Costura.Fody.6.2.0\build\Costura.Fody.props'))" />
     <Error Condition="!Exists('..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets'))" />
   </Target>
-  <Import Project="..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets" Condition="Exists('..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets')" />
-</Project>
+  <Import Project="..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets" Condition="Exists('..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets')" /></Project>
