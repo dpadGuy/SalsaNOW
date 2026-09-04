@@ -21,6 +21,7 @@ namespace SalsaNOW
         public string exeName { get; set; }
         public string run { get; set; }
         public string url { get; set; }
+        public string version { get; set; } = "1.0.0";
     }
 
     public class SilentApps
@@ -31,6 +32,7 @@ namespace SalsaNOW
         public string archive { get; set; }
         public string run { get; set; }
         public string url { get; set; }
+        public string version { get; set; } = "1.0.0";
     }
 
     public class DesktopInfo
