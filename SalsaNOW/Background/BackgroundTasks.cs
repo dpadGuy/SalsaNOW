@@ -339,7 +339,6 @@ namespace SalsaNOW
 
                 SalsaLogger.Info("Registry updated.");
 
-                // Update current process
                 Environment.SetEnvironmentVariable("DOTNET_ROOT", dotnetRoot);
                 Environment.SetEnvironmentVariable("POWERSHELL_ROOT", powershellRoot);
 
@@ -400,11 +399,5 @@ namespace SalsaNOW
                     StringComparison.OrdinalIgnoreCase));
         }
 
-        public static async Task OpenShellStartup(string globalDirectory)
-        {
-            await Task.Delay(15000); // Wait for the system to stabilize before launching Open-Shell
-
-            Process.Start($"{globalDirectory}\\SilentApps\\Open-Shell\\StartMenu.exe");
-        }
     }
 }

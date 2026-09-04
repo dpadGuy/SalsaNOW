@@ -26,8 +26,8 @@
     <UpdatePeriodically>false</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
-    <ApplicationRevision>2</ApplicationRevision>
-    <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
+    <ApplicationRevision>0</ApplicationRevision>
+    <ApplicationVersion>1.6.8.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
     <BootstrapperEnabled>true</BootstrapperEnabled>
@@ -90,6 +90,7 @@
       <Private>True</Private>
       <Private>True</Private>
     </Reference>
+    <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -99,17 +100,20 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="AppInstaller.cs" />
-    <Compile Include="AutoPersist.cs" />
-    <Compile Include="BackgroundTasks.cs" />
+    <Compile Include="Background\BackgroundTasks.cs" />
+    <Compile Include="Background\FinalBackgroundTasks.cs" />
+    <Compile Include="Core\NativeMethods.cs" />
+    <Compile Include="Core\SalsaLogger.cs" />
+    <Compile Include="Core\SalsaSettings.cs" />
+            <Compile Include="InstallTasks\AppInstaller.cs" />
+            <Compile Include="InstallTasks\DesktopInstaller.cs" />
+            <Compile Include="InstallTasks\DotNetInstaller.cs" />
     <Compile Include="Models\SalsaModels.cs" />
-    <Compile Include="NativeMethods.cs" />
-    <Compile Include="NvidiaManager.cs" />
+    <Compile Include="Nvidia\NvidiaManager.cs" />
+    <Compile Include="PersistTasks\AutoPersist.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="RecoveryMode.cs" />
-    <Compile Include="SalsaLogger.cs" />
-    <Compile Include="SalsaSettings.cs" />
+    <Compile Include="Recovery\RecoveryMode.cs" />
     <Compile Include="SteamTasks\SteamDetach.cs" />
     <Compile Include="SteamTasks\SteamManager.cs" />
   </ItemGroup>

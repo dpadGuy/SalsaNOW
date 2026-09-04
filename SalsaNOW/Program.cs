@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            Console.Title = "SalsaNOW V1.6.7.2 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.8 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -32,7 +32,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.7.2");
+            Console.WriteLine("SalsaNOW V1.6.8");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
@@ -42,10 +42,16 @@ namespace SalsaNOW
                 await Task.Delay(5000); Environment.Exit(0);
             }
 
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
+            ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, errors) => true;
+            ServicePointManager.DefaultConnectionLimit = 32;
+            ServicePointManager.Expect100Continue = false;
+            ServicePointManager.UseNagleAlgorithm = false;
+
             // Recovery mode prompt
             const string text = "Press DEL key for recovery mode";
             DateTime start = DateTime.Now;
-            DateTime end = start.AddSeconds(3);
+            DateTime end = start.AddSeconds(1.5);
 
             while (DateTime.Now < end)
             {
@@ -74,9 +80,6 @@ namespace SalsaNOW
             // Clear the prompt line before continuing
             Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
 
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
-            ServicePointManager.ServerCertificateValidationCallback += (sender, cert, chain, errors) => true;
-
             await Startup();
 
             // Load configuration once to share settings across modules
@@ -93,22 +96,20 @@ namespace SalsaNOW
             _ = BackgroundTasks.StartTerminateGFNExplorerShellAsync(cts.Token);
             _ = BackgroundTasks.StartEacWatcherAsync(cts.Token);
             _ = BackgroundTasks.StartBrickPreventionAsync(cts.Token);
+            _ = DotNetInstaller.StartDotNetInstallAsync(cts.Token);
+            _ = Task.Run(() => NvidiaManager.EnableRTX());
 
-            await SteamManager.SetupGameSavesAsync(globalDirectory);
-
-            _ = SteamManager.ShutdownServerAsync(globalDirectory);
-
-            // Execute deployment modules
-            await AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath);
-            await AppInstaller.AppsInstallSilentAsync(globalDirectory);
-            await AppInstaller.DesktopInstallAsync(globalDirectory);
-
-            // Apply Nvidia optimizations always
-            NvidiaManager.EnableRTX();
+            await Task.WhenAll(
+                SteamManager.SetupGameSavesAsync(globalDirectory),
+                SteamManager.ShutdownServerAsync(globalDirectory),
+                DesktopInstaller.DesktopInstallAsync(globalDirectory),
+                AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath),
+                AppInstaller.AppsInstallSilentAsync(globalDirectory)
+            );
 
             NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
 
-            await BackgroundTasks.OpenShellStartup(globalDirectory);
+            await FinalBackgroundTasks.OpenShellStartup(globalDirectory);
 
             try { await Task.Delay(Timeout.Infinite, cts.Token); } catch (TaskCanceledException) { }
         }

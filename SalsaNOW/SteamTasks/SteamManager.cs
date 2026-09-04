@@ -28,37 +28,44 @@ namespace SalsaNOW
 
                 await DisableSteamInput();
 
-                Process.Start(new ProcessStartInfo
+                if (!Directory.Exists(@"C:\Program Files (x86)\Steam\steamuiNV"))
                 {
-                    FileName = "cmd.exe",
-                    Arguments = @"/c xcopy ""C:\Program Files (x86)\Steam\steamui"" ""C:\Program Files (x86)\Steam\steamuiOG"" /E /I /H /Y",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                })?.WaitForExit();
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = @"/c xcopy ""C:\Program Files (x86)\Steam\steamui"" ""C:\Program Files (x86)\Steam\steamuiOG"" /E /I /H /Y",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    })?.WaitForExit();
 
-                File.Delete(@"C:\Program Files (x86)\Steam\steamuiOG\chunk~2dcc5aaf7.js");
+                    File.Delete(@"C:\Program Files (x86)\Steam\steamuiOG\chunk~2dcc5aaf7.js");
 
-                Process.Start(new ProcessStartInfo
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamui"" ""steamuiNV""",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    })?.WaitForExit();
+
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "cmd.exe",
+                        Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamuiOG"" ""steamui""",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    })?.WaitForExit();
+                }
+
+                using (var chunkClient = new WebClient())
+                using (var usgClient = new WebClient())
                 {
-                    FileName = "cmd.exe",
-                    Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamui"" ""steamuiNV""",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                })?.WaitForExit();
-
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamuiOG"" ""steamui""",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                })?.WaitForExit();
-
-                using (var wc = new WebClient()) await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/chunk~2dcc5aaf7.js"), destinationDir + "\\chunk~2dcc5aaf7.js");
+                    var chunkDownload = chunkClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/chunk~2dcc5aaf7.js"), destinationDir + "\\chunk~2dcc5aaf7.js");
+                    var usgDownload = usgClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/bleh.exe"), usgMask);
+                    await Task.WhenAll(chunkDownload, usgDownload);
+                }
 
                 // Steam USG Bypass Part (Temporary until patch discovered)
-
-                using (var wc = new WebClient()) await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/bleh.exe"), usgMask);
 
                 Process usg = null;
 
@@ -76,7 +83,7 @@ namespace SalsaNOW
                     usg = Process.Start(usgMask);
                 }
 
-                await Task.Delay(500); // Wait for the process to start
+                await Task.Delay(200);
 
                 if (Directory.Exists(cache)) Directory.Delete(cache, true);
 
@@ -84,9 +91,16 @@ namespace SalsaNOW
                 string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
                 if (File.Exists(batch)) Process.Start(new ProcessStartInfo { FileName = batch, UseShellExecute = true });
 
-                if (usg != null) { while (!usg.HasExited) await Task.Delay(1000); }
-                await Task.Delay(200);
-                if (File.Exists(usgMask)) File.Delete(usgMask);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        if (usg != null) { while (!usg.HasExited) await Task.Delay(1000); }
+                        await Task.Delay(200);
+                        if (File.Exists(usgMask)) File.Delete(usgMask);
+                    }
+                    catch { }
+                });
                 
                 SalsaLogger.Info("Steam Proxy successfully bypassed.");
             }
@@ -109,9 +123,8 @@ namespace SalsaNOW
                 {
                     string crafted = Path.Combine(savesRoot, Path.GetFileName(dir));
                     Directory.CreateDirectory(crafted);
-                    Process.Start(new ProcessStartInfo("cmd.exe", $"/c rmdir /s /q \"{dir}\"") { UseShellExecute = true });
-                    await Task.Delay(500);
-                    Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{dir}\" \"{crafted}\"") { UseShellExecute = true });
+                    RunHiddenCmd($"/c rmdir /s /q \"{dir}\"");
+                    RunHiddenCmd($"/c mklink /J \"{dir}\" \"{crafted}\"");
 
                     if (dir.Contains(@"C:\Users\Public\Documents")) await HandlePublicDocs(dir, crafted);
                 }
@@ -137,16 +150,25 @@ namespace SalsaNOW
                 }, IntPtr.Zero);
             }
 
-            await Task.Delay(500); // A little bit of delay to ensure that the window has been fully closed
+            await Task.Delay(150);
 
             // Retry loop to ensure junction is created once the process releases the handle
             for (int i = 0; i < 20; i++)
             {
                 try { if (Directory.Exists(dir)) Directory.Delete(dir, true);
-                    if (!Directory.Exists(dir)) { Process.Start(new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{dir}\" \"{crafted}\"") { UseShellExecute = true }); break; }
+                    if (!Directory.Exists(dir)) { RunHiddenCmd($"/c mklink /J \"{dir}\" \"{crafted}\""); break; }
                 } catch { }
-                await Task.Delay(300);
+                await Task.Delay(150);
             }
+        }
+
+        private static void RunHiddenCmd(string args)
+        {
+            Process.Start(new ProcessStartInfo("cmd.exe", args)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true
+            })?.WaitForExit();
         }
 
         private static async Task DisableSteamInput()
