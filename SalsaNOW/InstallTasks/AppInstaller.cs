@@ -49,16 +49,25 @@ namespace SalsaNOW
                         string appDir = Path.Combine(globalDirectory, app.name);
                         string appExePath = Path.Combine(globalDirectory, app.exeName);
                         string appZipExe = Path.Combine(appDir, app.exeName);
-                        string versionKey = GetVersionKey(app.version);
-
                         bool isZip = app.fileExtension == "zip";
                         bool isExe = app.fileExtension == "exe";
 
-                        string versionMarkerFile = isZip
-                            ? Path.Combine(appDir, ".version")
-                            : Path.Combine(globalDirectory, $"{app.name}.version");
+                        if (isExe)
+                        {
+                            SalsaLogger.Info("Downloading " + app.name);
+                            await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
+                            if (ShouldCreateDesktopShortcut(globalDirectory, desktopPath))
+                                CreateShortcut(app.name, desktopPath, appExePath, globalDirectory);
+                            if (app.run == "true") Process.Start(appExePath);
+                            return;
+                        }
 
-                        bool alreadyExists = (isZip && Directory.Exists(appDir)) || (isExe && System.IO.File.Exists(appExePath));
+                        if (!isZip)
+                            return;
+
+                        string versionKey = GetVersionKey(app.version);
+                        string versionMarkerFile = Path.Combine(appDir, ".version");
+                        bool alreadyExists = Directory.Exists(appDir);
                         bool hasNewerVersion = HasRemoteUpdate(versionMarkerFile, versionKey);
 
                         if (!alreadyExists || hasNewerVersion)
@@ -68,42 +77,23 @@ namespace SalsaNOW
                             else
                                 SalsaLogger.Info("Installing " + app.name);
 
-                            if (isZip)
-                            {
-                                if (alreadyExists)
-                                    SafeDeleteDirectory(appDir);
+                            if (alreadyExists)
+                                SafeDeleteDirectory(appDir);
 
-                                string zipPath = $"{appDir}.zip";
-                                await webClient.DownloadFileTaskAsync(new Uri(app.url), zipPath);
-                                ZipFile.ExtractToDirectory(zipPath, appDir);
-                                System.IO.File.Delete(zipPath);
+                            string zipPath = $"{appDir}.zip";
+                            await webClient.DownloadFileTaskAsync(new Uri(app.url), zipPath);
+                            ZipFile.ExtractToDirectory(zipPath, appDir);
+                            System.IO.File.Delete(zipPath);
 
-                                WriteVersionMarker(versionMarkerFile, versionKey);
-
+                            WriteVersionMarker(versionMarkerFile, versionKey);
+                            if (ShouldCreateDesktopShortcut(globalDirectory, desktopPath))
                                 CreateShortcut(app.name, desktopPath, appZipExe, Path.GetDirectoryName(appZipExe));
-                                if (app.run == "true") Process.Start(appZipExe);
-                            }
-                            else if (isExe)
-                            {
-                                await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
-                                WriteVersionMarker(versionMarkerFile, versionKey);
-
-                                CreateShortcut(app.name, desktopPath, appExePath, globalDirectory);
-                                if (app.run == "true") Process.Start(appExePath);
-                            }
+                            if (app.run == "true") Process.Start(appZipExe);
                         }
                         else
                         {
                             SalsaLogger.Info($"{app.name} already exists. Skipping download and respecting user desktop layout.");
-
-                            if (isZip)
-                            {
-                                if (app.run == "true") Process.Start(appZipExe);
-                            }
-                            else if (isExe)
-                            {
-                                if (app.run == "true") Process.Start(appExePath);
-                            }
+                            if (app.run == "true") Process.Start(appZipExe);
                         }
                     }
                 })).ToList();
@@ -330,6 +320,20 @@ namespace SalsaNOW
                     System.Threading.Thread.Sleep(1000);
                 }
             }
+        }
+
+        private static bool ShouldCreateDesktopShortcut(string globalDirectory, string desktopPath)
+        {
+            if (System.IO.File.Exists(desktopPath))
+                return true;
+
+            string fileName = Path.GetFileName(desktopPath);
+            if (System.IO.File.Exists(Path.Combine(globalDirectory, "Shortcuts", fileName)))
+                return false;
+            if (System.IO.File.Exists(Path.Combine(globalDirectory, "Backup Shortcuts", fileName)))
+                return false;
+
+            return true;
         }
 
         // Generates Windows shortcuts, deleting existing dead shortcuts first to ensure proper VM binding

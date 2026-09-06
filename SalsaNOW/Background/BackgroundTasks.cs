@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -76,8 +77,7 @@ namespace SalsaNOW
             // 1. Initial Sync: Throw saved icons onto the fresh Desktop immediately
             try
             {
-                var allFiles = Directory.GetFiles(shortcutsDir, "*.lnk", SearchOption.AllDirectories);
-                foreach (string shortcut in allFiles)
+                foreach (string shortcut in GetShortcutFiles(shortcutsDir))
                 {
                     File.Copy(shortcut, Path.Combine(desktopPath, Path.GetFileName(shortcut)), true);
                 }
@@ -92,14 +92,13 @@ namespace SalsaNOW
                     await Task.Delay(5000, token);
 
                     // 2. Protect core components from user deletion
-                    RestoreShortcut(desktopPath, shortcutsDir, backupDir, "PeaZip File Explorer Archiver.lnk");
+                    RestoreShortcut(desktopPath, shortcutsDir, backupDir, "Explorer++.lnk");
                     RestoreShortcut(desktopPath, shortcutsDir, backupDir, "System Informer.lnk");
 
                     // 3. Sync Desktop to Shortcuts (Overwrite MUST be false to prevent corrupting existing backups)
                     try
                     {
-                        var lnkFilesDesktop = Directory.GetFiles(desktopPath, "*.lnk", SearchOption.AllDirectories);
-                        foreach (var file in lnkFilesDesktop)
+                        foreach (var file in GetShortcutFiles(desktopPath))
                         {
                             string destPath = Path.Combine(shortcutsDir, Path.GetFileName(file));
                             if (!File.Exists(destPath))
@@ -118,8 +117,7 @@ namespace SalsaNOW
                     // 4. Sync Shortcuts To Start Menu
                     try
                     {
-                        var lnkFilesStart = Directory.GetFiles(shortcutsDir, "*.lnk", SearchOption.AllDirectories);
-                        foreach (var file in lnkFilesStart)
+                        foreach (var file in GetShortcutFiles(shortcutsDir))
                         {
                             string destPath = Path.Combine(startMenuPath, Path.GetFileName(file));
                             if (!File.Exists(destPath))
@@ -139,8 +137,7 @@ namespace SalsaNOW
                     // 5. Cleanup: Move deleted shortcuts from the primary folder to the long-term backup
                     try
                     {
-                        var lnkFilesBackup = Directory.GetFiles(shortcutsDir, "*.lnk", SearchOption.AllDirectories);
-                        foreach (var backupFile in lnkFilesBackup)
+                        foreach (var backupFile in GetShortcutFiles(shortcutsDir))
                         {
                             string fileName = Path.GetFileName(backupFile);
                             string originalPath = Path.Combine(desktopPath, fileName);
@@ -163,6 +160,20 @@ namespace SalsaNOW
                 }
             }
             catch (TaskCanceledException) { }
+        }
+
+        private static readonly string[] ShortcutGlobs = { "*.lnk", "*.url" };
+
+        private static IEnumerable<string> GetShortcutFiles(string directory)
+        {
+            if (!Directory.Exists(directory))
+                yield break;
+
+            foreach (string glob in ShortcutGlobs)
+            {
+                foreach (string file in Directory.GetFiles(directory, glob, SearchOption.AllDirectories))
+                    yield return file;
+            }
         }
 
         // Restores a specific shortcut from either the primary or backup directory
