@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            Console.Title = "SalsaNOW V1.6.8 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.8.1 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -32,7 +32,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.8");
+            Console.WriteLine("SalsaNOW V1.6.8.1");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
@@ -90,6 +90,7 @@ namespace SalsaNOW
             // Apply registry changes and backup desktop registry
             _ = AutoPersist.BackupDesktopRegistry(cts.Token, globalDirectory);
             _ = AutoPersist.ApplyCustomRegistryFiles(globalDirectory);
+            _ = AutoPersist.SetupGameSavesAsync(globalDirectory);
 
             // Fire and forget non-blocking background services
             _ = BackgroundTasks.StartShortcutsSavingAsync(globalDirectory, cts.Token);
@@ -100,7 +101,6 @@ namespace SalsaNOW
             _ = Task.Run(() => NvidiaManager.EnableRTX());
 
             await Task.WhenAll(
-                SteamManager.SetupGameSavesAsync(globalDirectory),
                 SteamManager.ShutdownServerAsync(globalDirectory),
                 DesktopInstaller.DesktopInstallAsync(globalDirectory),
                 AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath),
