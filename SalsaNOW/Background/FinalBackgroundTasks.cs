@@ -19,6 +19,7 @@ namespace SalsaNOW
 
             try
             {
+                RemoveDxCache(globalDirectory);
                 ApplyFileAssociations(globalDirectory);
                 ApplyDesktopContextMenus(globalDirectory);
                 CreateSteamDesktopShortcut(globalDirectory);
@@ -54,6 +55,23 @@ namespace SalsaNOW
             }
 
             SalsaLogger.Warn("StartHookWindow not found.");
+        }
+
+        private static void RemoveDxCache(string globalDirectory)
+        {
+            string dxCache = Path.Combine(globalDirectory, "Game Saves", "DXCache");
+            if (!Directory.Exists(dxCache))
+                return;
+
+            try
+            {
+                Directory.Delete(dxCache, true);
+                SalsaLogger.Info("Removed Game Saves\\DXCache.");
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("Failed to remove Game Saves\\DXCache: " + ex.Message);
+            }
         }
 
         private static void ApplyFileAssociations(string globalDirectory)
