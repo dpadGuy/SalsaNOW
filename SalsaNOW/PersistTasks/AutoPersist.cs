@@ -161,7 +161,7 @@ namespace SalsaNOW
             {
                 SalsaLogger.Info("Setting up Cloud Save directory junctions...");
                 string json;
-                using (var wc = new WebClient()) json = await wc.DownloadStringTaskAsync("https://salsanowfiles.work/jsons/GameSavesPathsTest.json");
+                using (var wc = new WebClient()) json = await wc.DownloadStringTaskAsync("https://salsanowfiles.work/jsons/GameSavesPaths.json");
                 var savePaths = JsonConvert.DeserializeObject<GamesSavePaths>(json);
                 string savesRoot = Path.Combine(globalDirectory, "Game Saves");
                 Directory.CreateDirectory(savesRoot);
