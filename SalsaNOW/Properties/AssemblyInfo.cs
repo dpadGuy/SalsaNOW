@@ -31,3 +31,4 @@ using System.Runtime.InteropServices;
 //
 [assembly: AssemblyVersion("1.6.8.1")]
 [assembly: AssemblyFileVersion("1.6.8.1")]
+[assembly: AssemblyInformationalVersion("1.6.8.1-hotfix1")]
