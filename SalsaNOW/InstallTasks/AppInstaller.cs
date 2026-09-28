@@ -336,9 +336,31 @@ namespace SalsaNOW
             return true;
         }
 
-        // Generates Windows shortcuts, deleting existing dead shortcuts first to ensure proper VM binding
+        // Generates Windows shortcuts. Existing icon, arguments, and hotkey are kept.
         public static void CreateShortcut(string name, string path, string target, string workDir)
         {
+            string arguments = "";
+            string iconLocation = "";
+            string description = "";
+            string hotkey = "";
+            int windowStyle = 1;
+
+            try
+            {
+                if (System.IO.File.Exists(path))
+                {
+                    Type readerType = Type.GetTypeFromProgID("WScript.Shell");
+                    dynamic readerShell = Activator.CreateInstance(readerType);
+                    dynamic existing = readerShell.CreateShortcut(path);
+                    arguments = Convert.ToString(existing.Arguments) ?? "";
+                    iconLocation = Convert.ToString(existing.IconLocation) ?? "";
+                    description = Convert.ToString(existing.Description) ?? "";
+                    hotkey = Convert.ToString(existing.Hotkey) ?? "";
+                    windowStyle = Convert.ToInt32(existing.WindowStyle);
+                }
+            }
+            catch { }
+
             // Attempt to remove dead/corrupt shortcut to enforce generation of a new Volume GUID
             for (int i = 0; i < 5; i++)
             {
@@ -357,7 +379,15 @@ namespace SalsaNOW
                 dynamic shell = Activator.CreateInstance(tWsh);
                 var lnk = shell.CreateShortcut(path);
                 lnk.TargetPath = target;
+                lnk.Arguments = arguments;
                 lnk.WorkingDirectory = workDir;
+                lnk.WindowStyle = windowStyle;
+                if (!string.IsNullOrEmpty(description))
+                    lnk.Description = description;
+                if (!string.IsNullOrEmpty(hotkey))
+                    lnk.Hotkey = hotkey;
+                if (!string.IsNullOrEmpty(iconLocation))
+                    lnk.IconLocation = iconLocation;
                 lnk.Save();
             }
             catch (Exception ex) { SalsaLogger.Error($"Shortcut creation failed for {name}: {ex.Message}"); }

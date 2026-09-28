@@ -26,8 +26,8 @@
     <UpdatePeriodically>false</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
-    <ApplicationRevision>2</ApplicationRevision>
-    <ApplicationVersion>1.6.8.1</ApplicationVersion>
+    <ApplicationRevision>0</ApplicationRevision>
+    <ApplicationVersion>1.6.9.0</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
     <BootstrapperEnabled>true</BootstrapperEnabled>
@@ -79,6 +79,7 @@
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Management" />
     <Reference Include="System.IO.Compression, Version=4.1.2.0, Culture=neutral, PublicKeyToken=b77a5c561934e089, processorArchitecture=MSIL">
       <HintPath>..\packages\System.IO.Compression.4.3.0\lib\net46\System.IO.Compression.dll</HintPath>
       <Private>True</Private>
@@ -102,12 +103,13 @@
   <ItemGroup>
     <Compile Include="Background\BackgroundTasks.cs" />
     <Compile Include="Background\FinalBackgroundTasks.cs" />
+    <Compile Include="Background\SalsaNOWSettingsApply.cs" />
     <Compile Include="Core\NativeMethods.cs" />
     <Compile Include="Core\SalsaLogger.cs" />
     <Compile Include="Core\SalsaSettings.cs" />
-            <Compile Include="InstallTasks\AppInstaller.cs" />
-            <Compile Include="InstallTasks\DesktopInstaller.cs" />
-            <Compile Include="InstallTasks\DotNetInstaller.cs" />
+    <Compile Include="InstallTasks\AppInstaller.cs" />
+    <Compile Include="InstallTasks\DesktopInstaller.cs" />
+    <Compile Include="InstallTasks\DotNetInstaller.cs" />
     <Compile Include="Models\SalsaModels.cs" />
     <Compile Include="Nvidia\NvidiaManager.cs" />
     <Compile Include="PersistTasks\AutoPersist.cs" />

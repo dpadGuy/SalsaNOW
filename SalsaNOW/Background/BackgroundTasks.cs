@@ -74,13 +74,12 @@ namespace SalsaNOW
             Directory.CreateDirectory(shortcutsDir);
             Directory.CreateDirectory(backupDir);
 
-            // 1. Initial Sync: Throw saved icons onto the fresh Desktop immediately
+            // 1. Initial Sync: Throw the newest saved shortcut for each name onto the Desktop
             try
             {
-                foreach (string shortcut in GetShortcutFiles(shortcutsDir))
-                {
-                    File.Copy(shortcut, Path.Combine(desktopPath, Path.GetFileName(shortcut)), true);
-                }
+                foreach (KeyValuePair<string, string> shortcut in GetNewestShortcutPerName(shortcutsDir))
+                    CopyShortcut(shortcut.Value, Path.Combine(desktopPath, shortcut.Key));
+
                 SalsaLogger.Info("Initial Desktop shortcut sync completed.");
             }
             catch (Exception ex) { SalsaLogger.Error($"Initial shortcut sync failed: {ex.Message}"); }
@@ -91,46 +90,25 @@ namespace SalsaNOW
                 {
                     await Task.Delay(5000, token);
 
-                    // 2. Protect core components from user deletion
-                    RestoreShortcut(desktopPath, shortcutsDir, backupDir, "Explorer++.lnk");
-                    RestoreShortcut(desktopPath, shortcutsDir, backupDir, "System Informer.lnk");
-
-                    // 3. Sync Desktop to Shortcuts (Overwrite MUST be false to prevent corrupting existing backups)
+                    // Sync Desktop to Shortcuts, overwriting saved copies
                     try
                     {
-                        foreach (var file in GetShortcutFiles(desktopPath))
+                        if (Directory.Exists(desktopPath))
                         {
-                            string destPath = Path.Combine(shortcutsDir, Path.GetFileName(file));
-                            if (!File.Exists(destPath))
+                            foreach (string glob in ShortcutGlobs)
                             {
-                                try 
-                                { 
-                                    File.Copy(file, destPath, false); 
-                                    SalsaLogger.Info($"Backed up new shortcut: {Path.GetFileName(file)}");
-                                } 
-                                catch { }
+                                foreach (string file in Directory.GetFiles(desktopPath, glob, SearchOption.TopDirectoryOnly))
+                                    CopyShortcut(file, Path.Combine(shortcutsDir, Path.GetFileName(file)));
                             }
                         }
                     }
                     catch { }
 
-                    // 4. Sync Shortcuts To Start Menu
+                    // Sync Shortcuts To Start Menu from the newest saved copy of each shortcut
                     try
                     {
-                        foreach (var file in GetShortcutFiles(shortcutsDir))
-                        {
-                            string destPath = Path.Combine(startMenuPath, Path.GetFileName(file));
-                            if (!File.Exists(destPath))
-                            {
-                                try 
-                                { 
-                                    if (!Directory.Exists(startMenuPath)) Directory.CreateDirectory(startMenuPath);
-                                    File.Copy(file, destPath, false); 
-                                    SalsaLogger.Info($"Copied shortcut over to Start Menu: {Path.GetFileName(file)}");
-                                } 
-                                catch { }
-                            }
-                        }
+                        foreach (KeyValuePair<string, string> shortcut in GetNewestShortcutPerName(shortcutsDir))
+                            CopyShortcut(shortcut.Value, Path.Combine(startMenuPath, shortcut.Key));
                     }
                     catch { }
 
@@ -176,25 +154,40 @@ namespace SalsaNOW
             }
         }
 
-        // Restores a specific shortcut from either the primary or backup directory
-        private static void RestoreShortcut(string desktop, string shortcuts, string backup, string name)
+        private static Dictionary<string, string> GetNewestShortcutPerName(string directory)
         {
-            string targetDesktopPath = Path.Combine(desktop, name);
-            if (!File.Exists(targetDesktopPath))
+            var newest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string file in GetShortcutFiles(directory))
             {
-                string sourcePath = Path.Combine(shortcuts, name);
-                if (!File.Exists(sourcePath)) sourcePath = Path.Combine(backup, name);
-
-                if (File.Exists(sourcePath))
+                string name = Path.GetFileName(file);
+                string existing;
+                if (!newest.TryGetValue(name, out existing)
+                    || File.GetLastWriteTimeUtc(file) >= File.GetLastWriteTimeUtc(existing))
                 {
-                    try 
-                    { 
-                        File.Copy(sourcePath, targetDesktopPath); 
-                        SalsaLogger.Warn($"Restored missing core component: {name}");
-                        new Thread(() => MessageBox.Show($"{Path.GetFileNameWithoutExtension(name)} is a core component and cannot be removed.", "SalsaNOW", MessageBoxButtons.OK, MessageBoxIcon.Information)).Start();
-                    } 
-                    catch { }
+                    newest[name] = file;
                 }
+            }
+
+            return newest;
+        }
+
+        private static void CopyShortcut(string source, string dest)
+        {
+            try
+            {
+                string destDirectory = Path.GetDirectoryName(dest);
+                if (!string.IsNullOrEmpty(destDirectory))
+                    Directory.CreateDirectory(destDirectory);
+
+                if (File.Exists(dest))
+                    File.SetAttributes(dest, FileAttributes.Normal);
+
+                File.Copy(source, dest, true);
+                File.SetLastWriteTimeUtc(dest, DateTime.UtcNow);
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("Shortcut copy failed for " + Path.GetFileName(source) + ": " + ex.Message);
             }
         }
 

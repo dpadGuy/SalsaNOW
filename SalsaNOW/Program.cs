@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            Console.Title = "SalsaNOW V1.6.8.1-hotfix1 - by dpadGuy";
+            Console.Title = "SalsaNOW V1.6.9 - by dpadGuy";
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -32,7 +32,7 @@ namespace SalsaNOW
                 }
             }
 
-            Console.WriteLine("SalsaNOW V1.6.8.1-hotfix1");
+            Console.WriteLine("SalsaNOW V1.6.9");
             Console.WriteLine("IF YOU HAVE PAID FOR SALSANOW ACCESS THEN IT MEANS YOU GOT SCAMMED AND SHOULD DEMAND YOUR MONEY BACK IMMEDIATELY.");
             Console.WriteLine("");
 
@@ -83,7 +83,7 @@ namespace SalsaNOW
             await Startup();
 
             // Load configuration once to share settings across modules
-            SalsaSettings.Load(globalDirectory);
+            SalsaSettings.Load();
 
             _ = Task.Run(() => BackgroundTasks.EnvironmentSetup());
 
@@ -100,16 +100,17 @@ namespace SalsaNOW
             _ = DotNetInstaller.StartDotNetInstallAsync(cts.Token);
             _ = Task.Run(() => NvidiaManager.EnableRTX());
 
-            await Task.WhenAll(
+            Task installs = Task.WhenAll(
                 SteamManager.ShutdownServerAsync(globalDirectory),
                 DesktopInstaller.DesktopInstallAsync(globalDirectory),
                 AppInstaller.AppsInstallAsync(globalDirectory, customAppsJsonPath),
                 AppInstaller.AppsInstallSilentAsync(globalDirectory)
             );
 
-            NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
+            await installs;
+            await FinalBackgroundTasks.FinalTasks(globalDirectory, cts.Token);
 
-            await FinalBackgroundTasks.OpenShellStartup(globalDirectory);
+            NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
 
             try { await Task.Delay(Timeout.Infinite, cts.Token); } catch (TaskCanceledException) { }
         }
@@ -127,9 +128,6 @@ namespace SalsaNOW
                     // Initialize Logger here so it knows the global directory path
                     SalsaLogger.Initialize(globalDirectory);
                     SalsaLogger.Info($"Main directory created {globalDirectory}");
-                    
-                    string cfg = Path.Combine(globalDirectory, "SalsaNOWConfig.ini");
-                    if (!System.IO.File.Exists(cfg)) await wc.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/jsons/SalsaNOWConfig.ini"), cfg);
                 }
             }
             // Upload Crashlogs to paste.rs and show the user a link to forward to the Devs

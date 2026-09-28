@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -12,20 +13,26 @@ namespace SalsaNOW
 {
     internal static class FinalBackgroundTasks
     {
-        public static async Task OpenShellStartup(string globalDirectory)
+        public static async Task FinalTasks(string globalDirectory, CancellationToken token)
         {
-            await CloseStartHookWindowAsync();
-            await Task.Delay(3000);
+            Task hookTask = CloseStartHookWindowAsync();
 
             try
             {
                 RemoveDxCache(globalDirectory);
                 ApplyFileAssociations(globalDirectory);
+                SalsaNOWSettingsApply.Start(token);
+
                 ApplyDesktopContextMenus(globalDirectory);
                 CreateSteamDesktopShortcut(globalDirectory);
                 PinOpenShellShortcuts();
                 ResetExplorerPlusPlus();
+
+                if (!hookTask.IsCompleted)
+                    await Task.WhenAny(hookTask, Task.Delay(1500));
+
                 StartOpenShell(globalDirectory);
+                SalsaNOWSettingsApply.RefreshShellAppearance();
                 ShowFirstRunNotice(globalDirectory);
             }
             catch (Exception ex)
@@ -42,7 +49,6 @@ namespace SalsaNOW
             {
                 try
                 {
-                    await Task.Delay(500);
                     IntPtr window = NativeMethods.FindWindowByCaption(IntPtr.Zero, "StartHookWindow");
                     if (window != IntPtr.Zero)
                     {
@@ -52,6 +58,8 @@ namespace SalsaNOW
                     }
                 }
                 catch { }
+
+                await Task.Delay(200);
             }
 
             SalsaLogger.Warn("StartHookWindow not found.");
@@ -89,6 +97,7 @@ namespace SalsaNOW
             RegisterOpenCommand(@"Software\Classes\NPP.Custom\shell\open\command", nppPath);
             RegisterOpenCommand(@"Software\Classes\PZ.Custom\shell\open\command", peazipPath);
 
+            var associations = new List<KeyValuePair<string, string>>();
             string[] notepadExtensions =
             {
                 ".txt", ".log", ".err",
@@ -104,11 +113,12 @@ namespace SalsaNOW
             };
 
             foreach (string extension in notepadExtensions)
-                SetUserFta(setUserFta, extension, "NPP.Custom");
+                associations.Add(new KeyValuePair<string, string>(extension, "NPP.Custom"));
 
             foreach (string extension in peazipExtensions)
-                SetUserFta(setUserFta, extension, "PZ.Custom");
+                associations.Add(new KeyValuePair<string, string>(extension, "PZ.Custom"));
 
+            SalsaNOWSettingsApply.ApplyUserFta(setUserFta, associations);
             SalsaLogger.Info("File associations applied.");
         }
 
@@ -129,25 +139,26 @@ namespace SalsaNOW
             }
         }
 
-        private static void SetUserFta(string setUserFta, string extension, string progId)
+        public static void EnableClassicContextMenu()
         {
             try
             {
-                using (var process = Process.Start(new ProcessStartInfo
+                using (Process process = Process.Start(new ProcessStartInfo
                 {
-                    FileName = setUserFta,
-                    Arguments = extension + " " + progId,
+                    FileName = "reg.exe",
+                    Arguments = "add \"HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32\" /f /ve",
                     UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
+                    CreateNoWindow = true
                 }))
                 {
                     process?.WaitForExit();
                 }
+
+                SalsaLogger.Info("Classic right-click menu enabled.");
             }
             catch (Exception ex)
             {
-                SalsaLogger.Error("SetUserFTA " + extension + " failed: " + ex.Message);
+                SalsaLogger.Error("Classic right-click menu failed: " + ex.Message);
             }
         }
 

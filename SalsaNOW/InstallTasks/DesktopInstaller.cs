@@ -3,6 +3,7 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -35,7 +36,7 @@ namespace SalsaNOW
         {
             string defaultWallpaperDir = Path.Combine(globalDirectory, "DesktopWallpaper", "DefaultWallpaper");
             string userWallpaperDir = Path.Combine(globalDirectory, "DesktopWallpaper");
-            const string jsonUrl = "https://salsanowfiles.work/jsons/ExplorerDesktop.json";
+            const string jsonUrl = "https://salsanowfiles.work/dev/jsons/ExplorerDesktop.json";
 
             // 1. Enforce Dark Mode
             try
@@ -43,21 +44,14 @@ namespace SalsaNOW
                 using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
                 {
                     key?.SetValue("AppsUseLightTheme", 0, Microsoft.Win32.RegistryValueKind.DWord);
+                    key?.SetValue("SystemUsesLightTheme", 0, Microsoft.Win32.RegistryValueKind.DWord);
                 }
             }
             catch (Exception ex) { SalsaLogger.Error("Failed to set Dark Mode: " + ex.Message); }
 
-            // 2. Set default wallpaper from the Wallpapers user directory, if nothing is found then we apply the default wallpaper
-            if (!Directory.Exists(userWallpaperDir))
-            {
-                Directory.CreateDirectory(userWallpaperDir);
-                Directory.CreateDirectory(defaultWallpaperDir);
-
-                using (var webClient = new WebClient())
-                {
-                    await webClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/ExplorerContents/Wallpaper/WallpaperWin11.jpg"), $"{defaultWallpaperDir}\\WallpaperWin11.jpg");
-                }
-            }
+            // 2. Use the user's wallpaper when one is set. Otherwise always download and apply the default.
+            Directory.CreateDirectory(userWallpaperDir);
+            Directory.CreateDirectory(defaultWallpaperDir);
 
             string wallpaper = Directory
                 .EnumerateFiles(userWallpaperDir)
@@ -68,18 +62,29 @@ namespace SalsaNOW
 
             if (wallpaper == null)
             {
-                // Apply default wallpaper if no user-defined wallpaper is found
-                bool success = NativeMethods.SystemParametersInfo(
-                    SPI_SETDESKWALLPAPER,
-                    0,
-                    $"{defaultWallpaperDir}\\WallpaperWin11.jpg",
-                    SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
-                );
+                string defaultWallpaper = Path.Combine(defaultWallpaperDir, "WallpaperWin11.jpg");
+                try
+                {
+                    using (var webClient = new WebClient())
+                    {
+                        await webClient.DownloadFileTaskAsync(
+                            new Uri("https://salsanowfiles.work/ExplorerContents/Wallpaper/WallpaperWin11.jpg"),
+                            defaultWallpaper);
+                    }
+
+                    SalsaLogger.Info("No user wallpaper set. Downloaded default wallpaper.");
+                }
+                catch (Exception ex)
+                {
+                    SalsaLogger.Error("Failed to download default wallpaper: " + ex.Message);
+                }
+
+                wallpaper = File.Exists(defaultWallpaper) ? defaultWallpaper : null;
             }
-            else
+
+            if (wallpaper != null)
             {
-                // Apply user-defined wallpaper if found
-                bool success = NativeMethods.SystemParametersInfo(
+                NativeMethods.SystemParametersInfo(
                     SPI_SETDESKWALLPAPER,
                     0,
                     wallpaper,
@@ -143,6 +148,7 @@ namespace SalsaNOW
                         string exePath = Path.Combine(appDir, desktop.exeName);
 
                         SalsaLogger.Info("Starting desktop app: " + exePath);
+                        FinalBackgroundTasks.EnableClassicContextMenu();
 
                         Process.Start(new ProcessStartInfo
                         {
@@ -186,7 +192,10 @@ namespace SalsaNOW
             {
                 using (var wc = new WebClient())
                 {
-                    string json = await wc.DownloadStringTaskAsync("https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-AU");
+                    string market = CultureInfo.CurrentUICulture.Name;
+                    if (string.IsNullOrWhiteSpace(market))
+                        market = "en-US";
+                    string json = await wc.DownloadStringTaskAsync("https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=" + market);
                     var url = JObject.Parse(json)["images"][0]["urlbase"].ToString();
                     await wc.DownloadFileTaskAsync(new Uri($"https://www.bing.com{url}_UHD.jpg"), Path.Combine(dir, "wallpaper.jpg"));
 
