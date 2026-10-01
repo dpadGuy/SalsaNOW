@@ -1,0 +1,35 @@
+name: Build SalsaNOW EXE
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore
+        run: nuget restore SalsaNOW.sln
+
+      - name: Build Release
+        run: msbuild SalsaNOW.sln /p:Configuration=Release /p:Platform="Any CPU"
+
+      - name: Find EXE
+        shell: powershell
+        run: |
+          Get-ChildItem -Path . -Filter "SalsaNOW.exe" -Recurse
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: SalsaNOW.exe
+          path: "**/bin/Release/SalsaNOW.exe"
