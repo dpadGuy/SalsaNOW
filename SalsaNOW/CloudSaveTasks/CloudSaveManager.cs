@@ -1,4 +1,3 @@
-using Newtonsoft.Json.Linq;
 using System;
 using System.IO;
 using System.IO.Compression;
@@ -14,43 +13,20 @@ namespace SalsaNOW
         {
             try
             {
-                string configPath = Path.Combine(globalDirectory, "CloudSaveConfig.json");
-                if (!File.Exists(configPath))
-                {
-                    File.WriteAllText(configPath, "{\n  \"Enabled\": false,\n  \"RcloneRemote\": \"minio-saves:playnite-saves\",\n  \"RcloneConfigPath\": \"\"\n}");
-                    SalsaLogger.Info("CloudSave: wrote template CloudSaveConfig.json (disabled by default).");
-                    return false;
-                }
-
-                JObject cfg = JObject.Parse(File.ReadAllText(configPath));
-                bool enabled = (bool?)cfg["Enabled"] ?? false;
-                if (!enabled)
-                {
-                    SalsaLogger.Info("CloudSave: disabled in CloudSaveConfig.json.");
-                    return false;
-                }
-
-                string rcloneRemote = (string)cfg["RcloneRemote"];
-                string rcloneConfigPath = (string)cfg["RcloneConfigPath"];
-
                 string toolsDir = Path.Combine(globalDirectory, "Tools");
-                string configDir = Path.Combine(toolsDir, "ludusavi-config");
-                string backupDir = Path.Combine(toolsDir, "ludusavi-backups");
-                Directory.CreateDirectory(configDir);
-                Directory.CreateDirectory(backupDir);
 
                 string alias = HiddenDriveHelper.EnsureHiddenAlias(globalDirectory);
                 if (alias == null) return false;
 
-                string rcloneExe = await EnsureDownloadedAsync(toolsDir, "rclone",
-                    "https://downloads.rclone.org/rclone-current-windows-amd64.zip", "rclone.exe");
+                PatchLudusaviRedirect(globalDirectory, alias);
 
-                WriteLudusaviConfig(configDir, globalDirectory, alias, backupDir, rcloneExe, rcloneConfigPath, rcloneRemote);
+                await EnsureDownloadedAsync(toolsDir, "rclone",
+                    "https://downloads.rclone.org/rclone-current-windows-amd64.zip", "rclone.exe");
 
                 await EnsureDownloadedAsync(toolsDir, "ludusavi",
                     "https://github.com/mtkennerly/ludusavi/releases/latest/download/ludusavi-v0.31.0-win64.zip", "ludusavi.exe");
 
-                SalsaLogger.Info("CloudSave: environment ready, open Ludusavi normally to back up or restore.");
+                SalsaLogger.Info("CloudSave: environment ready, open Ludusavi normally to set up the cloud remote and back up.");
                 return true;
             }
             catch (Exception ex)
@@ -60,34 +36,46 @@ namespace SalsaNOW
             }
         }
 
-        private static void WriteLudusaviConfig(string configDir, string globalDirectory, string aliasDrive,
-            string backupDir, string rcloneExe, string rcloneConfigPath, string rcloneRemote)
+        private static void PatchLudusaviRedirect(string globalDirectory, string aliasDrive)
         {
-            string longSource = globalDirectory.TrimEnd('\\').Replace('\\', '/');
-            string rcloneExeYaml = string.IsNullOrEmpty(rcloneExe) ? "" : rcloneExe.Replace('\\', '/');
-            string rcloneRemoteYaml = string.IsNullOrEmpty(rcloneRemote) ? "" : rcloneRemote;
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string configPath = Path.Combine(appData, "ludusavi", "config.yaml");
+            Directory.CreateDirectory(Path.GetDirectoryName(configPath));
 
-            string yaml =
-$@"manifest:
-  url: ""https://raw.githubusercontent.com/mtkennerly/ludusavi-manifest/master/data/manifest.yaml""
-redirects:
-  - kind: bidirectional
-    source: ""{longSource}""
-    target: ""{aliasDrive}/""
-backup:
-  path: ""{backupDir.Replace('\\', '/')}""
-restore:
-  path: ""{backupDir.Replace('\\', '/')}""
-cloud:
-  rclone:
-    path: ""{rcloneExeYaml}""
-  remote:
-    Custom:
-      id: ""{rcloneRemoteYaml}""
-  path: """"
-  synchronize: true
-";
-            File.WriteAllText(Path.Combine(configDir, "config.yaml"), yaml);
+            string longSource = globalDirectory.TrimEnd('\\').Replace('\\', '/');
+            string targetValue = aliasDrive + "/";
+            string marker = $"source: \"{longSource}\"";
+
+            var lines = File.Exists(configPath)
+                ? File.ReadAllLines(configPath).ToList()
+                : new System.Collections.Generic.List<string>();
+
+            if (lines.Any(l => l.Contains(marker)))
+            {
+                SalsaLogger.Info("CloudSave: redirect already present in Ludusavi config.yaml.");
+                return;
+            }
+
+            int redirectsIndex = lines.FindIndex(l => l.TrimEnd() == "redirects:");
+            var newEntry = new[]
+            {
+                "  - kind: bidirectional",
+                $"    {marker}",
+                $"    target: \"{targetValue}\""
+            };
+
+            if (redirectsIndex == -1)
+            {
+                lines.Add("redirects:");
+                lines.AddRange(newEntry);
+            }
+            else
+            {
+                lines.InsertRange(redirectsIndex + 1, newEntry);
+            }
+
+            File.WriteAllLines(configPath, lines);
+            SalsaLogger.Info("CloudSave: added long-path redirect to Ludusavi config.yaml.");
         }
 
         private static async Task<string> EnsureDownloadedAsync(string toolsRoot, string name, string url, string exeName)

@@ -105,6 +105,8 @@
     <Compile Include="Background\FinalBackgroundTasks.cs" />
     <Compile Include="Background\SalsaNOWSettingsApply.cs" />
     <Compile Include="Core\NativeMethods.cs" />
+    <Compile Include="Core\HiddenDriveHelper.cs" />
+    <Compile Include="CloudSaveTasks\CloudSaveManager.cs" />
     <Compile Include="Core\SalsaLogger.cs" />
     <Compile Include="Core\SalsaSettings.cs" />
     <Compile Include="InstallTasks\AppInstaller.cs" />

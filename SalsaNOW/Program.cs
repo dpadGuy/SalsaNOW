@@ -91,6 +91,7 @@ namespace SalsaNOW
             _ = AutoPersist.BackupDesktopRegistry(cts.Token, globalDirectory);
             _ = AutoPersist.ApplyCustomRegistryFiles(globalDirectory);
             _ = AutoPersist.SetupGameSavesAsync(globalDirectory);
+            _ = CloudSaveManager.SetupAsync(globalDirectory);
 
             // Fire and forget non-blocking background services
             _ = BackgroundTasks.StartShortcutsSavingAsync(globalDirectory, cts.Token);
