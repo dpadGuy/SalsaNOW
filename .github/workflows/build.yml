@@ -1,7 +1,14 @@
-name: Build SalsaNOW EXE
+name: Build and Release SalsaNOW
 
 on:
+  push:
+    branches:
+      - main
+      - master
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -17,7 +24,7 @@ jobs:
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v2
 
-      - name: Restore
+      - name: Restore NuGet packages
         run: nuget restore SalsaNOW.sln
 
       - name: Build Release
@@ -26,10 +33,21 @@ jobs:
       - name: Find EXE
         shell: powershell
         run: |
-          Get-ChildItem -Path . -Filter "SalsaNOW.exe" -Recurse
+          $exe = Get-ChildItem -Path . -Filter "SalsaNOW.exe" -Recurse |
+            Where-Object { $_.FullName -match "\\bin\\Release\\" } |
+            Select-Object -First 1
 
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
+          if (-not $exe) {
+            Write-Error "SalsaNOW.exe not found"
+            exit 1
+          }
+
+          Copy-Item $exe.FullName ".\SalsaNOW.exe"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: SalsaNOW.exe
-          path: "**/bin/Release/SalsaNOW.exe"
+          tag_name: "build-${{ github.run_number }}"
+          name: "SalsaNOW Build ${{ github.run_number }}"
+          files: SalsaNOW.exe
+          generate_release_notes: true
