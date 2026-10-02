@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net;
 using System.Threading;
@@ -18,8 +18,6 @@ namespace SalsaNOW
         [STAThread]
         static async Task Main(string[] args)
         {
-            // Clean steam environment before everything.
-            // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
             Console.Title = "SalsaNOW V1.6.9 - by dpadGuy";
@@ -48,7 +46,6 @@ namespace SalsaNOW
             ServicePointManager.Expect100Continue = false;
             ServicePointManager.UseNagleAlgorithm = false;
 
-            // Recovery mode prompt
             const string text = "Press DEL key for recovery mode";
             DateTime start = DateTime.Now;
             DateTime end = start.AddSeconds(1.5);
@@ -61,7 +58,6 @@ namespace SalsaNOW
 
                     if (key.Key == ConsoleKey.Delete)
                     {
-                        // Clear the prompt line
                         Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
 
                         Console.WriteLine("Recovery mode selected.");
@@ -77,23 +73,19 @@ namespace SalsaNOW
                 Thread.Sleep(10);
             }
 
-            // Clear the prompt line before continuing
             Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
 
             await Startup();
 
-            // Load configuration once to share settings across modules
             SalsaSettings.Load();
 
             _ = Task.Run(() => BackgroundTasks.EnvironmentSetup());
 
-            // Apply registry changes and backup desktop registry
             _ = AutoPersist.BackupDesktopRegistry(cts.Token, globalDirectory);
             _ = AutoPersist.ApplyCustomRegistryFiles(globalDirectory);
             _ = AutoPersist.SetupGameSavesAsync(globalDirectory);
             _ = CloudSaveManager.SetupAsync(globalDirectory);
 
-            // Fire and forget non-blocking background services
             _ = BackgroundTasks.StartShortcutsSavingAsync(globalDirectory, cts.Token);
             _ = BackgroundTasks.StartTerminateGFNExplorerShellAsync(cts.Token);
             _ = BackgroundTasks.StartEacWatcherAsync(cts.Token);
@@ -126,12 +118,10 @@ namespace SalsaNOW
                     globalDirectory = dir.directoryCreate;
                     Directory.CreateDirectory(globalDirectory);
                     
-                    // Initialize Logger here so it knows the global directory path
                     SalsaLogger.Initialize(globalDirectory);
                     SalsaLogger.Info($"Main directory created {globalDirectory}");
                 }
             }
-            // Upload Crashlogs to paste.rs and show the user a link to forward to the Devs
             catch (Exception ex) 
             { 
                 SalsaLogger.UploadLogAndShowError(ex.Message);
