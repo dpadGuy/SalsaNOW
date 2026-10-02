@@ -1,32 +1,16 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading.Tasks;
-using Microsoft.Win32.SafeHandles;
 
 namespace SalsaNOW
 {
     internal static class CloudSaveManager
     {
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-        private static extern SafeFileHandle CreateFile(string lpFileName, uint dwDesiredAccess, uint dwShareMode,
-            IntPtr lpSecurityAttributes, uint dwCreationDisposition, uint dwFlagsAndAttributes, IntPtr hTemplateFile);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        private static extern uint GetFinalPathNameByHandle(SafeFileHandle hFile, StringBuilder lpszFilePath, uint cchFilePath, uint dwFlags);
-
-        private const uint GENERIC_READ = 0x80000000;
-        private const uint FILE_SHARE_READ_WRITE = 0x00000003;
-        private const uint OPEN_EXISTING = 3;
-        private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
-
         public static async Task<bool> SetupAsync(string globalDirectory)
         {
             try
@@ -41,20 +25,17 @@ namespace SalsaNOW
 
                 if (string.IsNullOrEmpty(ludusaviExe)) return false;
 
-                string realSavesRoot = DetectRealSavesRoot();
-                if (string.IsNullOrEmpty(realSavesRoot))
+                string userRoot = DetectUserSavesRoot();
+                if (string.IsNullOrEmpty(userRoot))
                 {
-                    SalsaLogger.Error("CloudSave: could not resolve the real saves root, aborting.");
+                    SalsaLogger.Error("CloudSave: could not resolve the user profile root, aborting.");
                     return false;
                 }
 
-                string alias = EnsureSubstDrive(realSavesRoot);
-                if (string.IsNullOrEmpty(alias)) return false;
-
-                PatchLudusaviConfig(realSavesRoot, alias, rcloneExe);
+                PatchLudusaviConfig(userRoot, rcloneExe);
                 CreateLudusaviShortcut(ludusaviExe);
 
-                SalsaLogger.Info("CloudSave: environment ready, open Ludusavi normally to set up the cloud remote and back up.");
+                SalsaLogger.Info($"CloudSave: environment ready, using {userRoot}. Open Ludusavi normally to set up the cloud remote and back up.");
                 return true;
             }
             catch (Exception ex)
@@ -64,134 +45,18 @@ namespace SalsaNOW
             }
         }
 
-        private static string ResolveJunctionTarget(string path)
-        {
-            if (!Directory.Exists(path)) return null;
-
-            using (var handle = CreateFile(path, GENERIC_READ, FILE_SHARE_READ_WRITE, IntPtr.Zero,
-                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero))
-            {
-                if (handle.IsInvalid) return null;
-
-                var sb = new StringBuilder(2048);
-                uint len = GetFinalPathNameByHandle(handle, sb, (uint)sb.Capacity, 0);
-                if (len == 0 || len >= sb.Capacity) return null;
-
-                string result = sb.ToString();
-                if (result.StartsWith(@"\\?\")) result = result.Substring(4);
-                return result;
-            }
-        }
-
-        private static string DetectRealSavesRoot()
+        // Returns e.g. "C:/Users/8f0...abc" — no subst, no junction resolution.
+        // Works whether the folder name is a real username or a kiosk hash.
+        private static string DetectUserSavesRoot()
         {
             string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            var probes = new List<string>
-            {
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                Path.Combine(userProfile, "AppData", "LocalLow"),
-                Path.Combine(userProfile, "Saved Games")
-            };
+            if (string.IsNullOrEmpty(userProfile) || !Directory.Exists(userProfile))
+                return null;
 
-            var resolved = new List<string>();
-            foreach (var probe in probes)
-            {
-                string target = ResolveJunctionTarget(probe);
-                if (!string.IsNullOrEmpty(target) &&
-                    !target.TrimEnd('\\').Equals(probe.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
-                {
-                    resolved.Add(target.Replace('\\', '/'));
-                }
-            }
-
-            if (resolved.Count == 0) return null;
-
-            string[] commonParts = resolved[0].Split('/');
-            int commonLen = commonParts.Length;
-
-            foreach (var r in resolved.Skip(1))
-            {
-                string[] parts = r.Split('/');
-                int i = 0;
-                while (i < commonLen && i < parts.Length && string.Equals(parts[i], commonParts[i], StringComparison.OrdinalIgnoreCase))
-                    i++;
-                commonLen = i;
-            }
-
-            if (commonLen == 0) return null;
-            return string.Join("/", commonParts.Take(commonLen));
+            return userProfile.Replace('\\', '/').TrimEnd('/');
         }
 
-        private static string EnsureSubstDrive(string targetPath)
-        {
-            targetPath = targetPath.Replace('/', '\\').TrimEnd('\\');
-
-            try
-            {
-                var psi = new ProcessStartInfo("cmd.exe", "/c subst")
-                {
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using (var process = Process.Start(psi))
-                {
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
-
-                    foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        if (line.Contains("=>") && line.IndexOf(targetPath, StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            string existingDrive = line.Substring(0, 2);
-                            SalsaLogger.Info($"CloudSave: subst alias already exists at {existingDrive}");
-                            return existingDrive;
-                        }
-                    }
-                }
-            }
-            catch { }
-
-            var usedDrives = DriveInfo.GetDrives().Select(d => char.ToUpper(d.Name[0])).ToHashSet();
-            char[] letters = { 'Y', 'X', 'W', 'V', 'U', 'T', 'S', 'R', 'Q', 'P', 'O', 'N', 'M', 'L', 'K', 'J', 'H', 'G' };
-
-            string driveToUse = null;
-            foreach (char c in letters)
-            {
-                if (!usedDrives.Contains(c))
-                {
-                    driveToUse = c + ":";
-                    break;
-                }
-            }
-
-            if (driveToUse == null)
-            {
-                SalsaLogger.Error("CloudSave: no free drive letters available for subst.");
-                return null;
-            }
-
-            try
-            {
-                var psi = new ProcessStartInfo("cmd.exe", $"/c subst {driveToUse} \"{targetPath}\"")
-                {
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                };
-                Process.Start(psi)?.WaitForExit();
-                SalsaLogger.Info($"CloudSave: created subst alias {driveToUse} -> {targetPath}");
-                return driveToUse;
-            }
-            catch (Exception ex)
-            {
-                SalsaLogger.Error("CloudSave: failed to create subst drive: " + ex.Message);
-                return null;
-            }
-        }
-
-        private static void PatchLudusaviConfig(string realSavesRoot, string aliasDrive, string rcloneExePath)
+        private static void PatchLudusaviConfig(string userRoot, string rcloneExePath)
         {
             try
             {
@@ -199,9 +64,9 @@ namespace SalsaNOW
                 string configPath = Path.Combine(appData, "ludusavi", "config.yaml");
                 Directory.CreateDirectory(Path.GetDirectoryName(configPath));
 
-                string normalizedSource = realSavesRoot.TrimEnd('/');
-                string normalizedAlias = aliasDrive.TrimEnd('\\', '/') + "/";
-                string normalizedRclone = !string.IsNullOrEmpty(rcloneExePath) ? rcloneExePath.Replace('\\', '/') : "";
+                string normalizedRclone = !string.IsNullOrEmpty(rcloneExePath)
+                    ? rcloneExePath.Replace('\\', '/')
+                    : "";
 
                 var lines = File.Exists(configPath)
                     ? File.ReadAllLines(configPath).ToList()
@@ -209,60 +74,51 @@ namespace SalsaNOW
 
                 if (!string.IsNullOrEmpty(normalizedRclone))
                 {
-                    int appsIndex = lines.FindIndex(l => l.TrimEnd() == "apps:");
-                    if (appsIndex == -1)
-                    {
-                        lines.Add("apps:");
-                        lines.Add("  rclone:");
-                        lines.Add($"    path: \"{normalizedRclone}\"");
-                        lines.Add("    arguments: \"--fast-list --ignore-checksum\"");
-                    }
-                    else
-                    {
-                        int rcloneIndex = lines.FindIndex(appsIndex + 1, l => l.Trim() == "rclone:");
-                        if (rcloneIndex == -1)
-                        {
-                            lines.Insert(appsIndex + 1, "  rclone:");
-                            lines.Insert(appsIndex + 2, $"    path: \"{normalizedRclone}\"");
-                        }
-                        else
-                        {
-                            int pathIndex = lines.FindIndex(rcloneIndex + 1, l => l.Trim().StartsWith("path:"));
-                            if (pathIndex != -1 && lines[pathIndex].StartsWith("    "))
-                                lines[pathIndex] = $"    path: \"{normalizedRclone}\"";
-                            else
-                                lines.Insert(rcloneIndex + 1, $"    path: \"{normalizedRclone}\"");
-                        }
-                    }
+                    UpsertRcloneBlock(lines, normalizedRclone);
                 }
 
-                string marker = $"source: \"{normalizedSource}\"";
-                lines.RemoveAll(l => l.Contains("source:") || l.Contains("target:") || l.Trim() == "- kind: bidirectional");
-
-                int redirectsIndex = lines.FindIndex(l => l.StartsWith("redirects:"));
-                var newEntry = new[]
-                {
-                    "  - kind: bidirectional",
-                    $"    {marker}",
-                    $"    target: \"{normalizedAlias}\""
-                };
-
-                if (redirectsIndex == -1)
-                {
-                    lines.Add("redirects:");
-                    lines.AddRange(newEntry);
-                }
-                else
-                {
-                    lines.InsertRange(redirectsIndex + 1, newEntry);
-                }
+                // userRoot is currently informational only; uncomment below to also set
+                // an explicit roots entry pointing at this user.
+                // UpsertRootsEntry(lines, userRoot);
 
                 File.WriteAllLines(configPath, lines);
-                SalsaLogger.Info($"CloudSave: redirect set {normalizedSource} -> {normalizedAlias}");
+                SalsaLogger.Info($"CloudSave: rclone configured at {normalizedRclone}");
             }
             catch (Exception ex)
             {
                 SalsaLogger.Error("CloudSave: failed to patch Ludusavi config: " + ex.Message);
+            }
+        }
+
+        private static void UpsertRcloneBlock(List<string> lines, string rclonePath)
+        {
+            int appsIndex = lines.FindIndex(l => l.TrimEnd() == "apps:");
+            if (appsIndex == -1)
+            {
+                lines.Add("apps:");
+                lines.Add("  rclone:");
+                lines.Add($"    path: \"{rclonePath}\"");
+                lines.Add("    arguments: \"--fast-list --ignore-checksum\"");
+                return;
+            }
+
+            int rcloneIndex = lines.FindIndex(appsIndex + 1, l => l.Trim() == "rclone:");
+            if (rcloneIndex == -1)
+            {
+                lines.Insert(appsIndex + 1, "  rclone:");
+                lines.Insert(appsIndex + 2, $"    path: \"{rclonePath}\"");
+                lines.Insert(appsIndex + 3, "    arguments: \"--fast-list --ignore-checksum\"");
+                return;
+            }
+
+            int pathIndex = lines.FindIndex(rcloneIndex + 1, l => l.Trim().StartsWith("path:"));
+            if (pathIndex != -1 && lines[pathIndex].StartsWith("    "))
+            {
+                lines[pathIndex] = $"    path: \"{rclonePath}\"";
+            }
+            else
+            {
+                lines.Insert(rcloneIndex + 1, $"    path: \"{rclonePath}\"");
             }
         }
 
@@ -330,7 +186,6 @@ namespace SalsaNOW
 
         private static async Task DownloadFileAsync(string url, string destinationPath, int maxRetries = 3)
         {
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
             using (var handler = new HttpClientHandler { AllowAutoRedirect = true })
             using (var client = new HttpClient(handler))
             {
@@ -352,7 +207,7 @@ namespace SalsaNOW
                             }
                         }
                     }
-                    catch (Exception)
+                    catch
                     {
                         if (attempt == maxRetries) throw;
                         await Task.Delay(2000);
