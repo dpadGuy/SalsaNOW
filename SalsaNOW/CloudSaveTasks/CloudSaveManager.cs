@@ -9,7 +9,6 @@ using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
-using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 namespace SalsaNOW
@@ -51,8 +50,6 @@ namespace SalsaNOW
 
                 string alias = EnsureSubstDrive(realSavesRoot);
                 if (string.IsNullOrEmpty(alias)) return false;
-
-                TryHideDriveSilent(alias);
 
                 PatchLudusaviConfig(realSavesRoot, alias, rcloneExe);
                 CreateLudusaviShortcut(ludusaviExe);
@@ -191,27 +188,6 @@ namespace SalsaNOW
             {
                 SalsaLogger.Error("CloudSave: failed to create subst drive: " + ex.Message);
                 return null;
-            }
-        }
-
-        private static void TryHideDriveSilent(string driveLetter)
-        {
-            try
-            {
-                char letter = char.ToUpper(driveLetter[0]);
-                int bit = 1 << (letter - 'A');
-                using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", true))
-                {
-                    if (key != null)
-                    {
-                        int current = (int)key.GetValue("NoDrives", 0);
-                        key.SetValue("NoDrives", current | bit, RegistryValueKind.DWord);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                SalsaLogger.Error("CloudSave: failed to hide drive letter (non-fatal): " + ex.Message);
             }
         }
 
@@ -384,6 +360,5 @@ namespace SalsaNOW
                 }
             }
         }
-
     }
 }
