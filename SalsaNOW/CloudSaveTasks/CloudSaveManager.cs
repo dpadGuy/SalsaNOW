@@ -18,28 +18,20 @@ namespace SalsaNOW
             {
                 string toolsDir = Path.Combine(globalDirectory, "Tools");
 
-                string targetDirectory = ResolveTargetDirectory(globalDirectory);
-
-                string alias = EnsureSubstDrive(targetDirectory);
-                if (string.IsNullOrEmpty(alias)) 
-                    return false;
-
-                TryHideDriveSilent(alias);
-
                 string rcloneExe = await EnsureDownloadedAsync(toolsDir, "rclone",
                     "https://downloads.rclone.org/rclone-current-windows-amd64.zip", "rclone.exe");
 
                 string ludusaviExe = await EnsureDownloadedAsync(toolsDir, "ludusavi",
                     "https://github.com/mtkennerly/ludusavi/releases/latest/download/ludusavi-v0.31.0-win64.zip", "ludusavi.exe");
 
-                PatchLudusaviConfig(targetDirectory, alias, rcloneExe);
+                PatchLudusaviConfig(globalDirectory, rcloneExe);
 
                 if (!string.IsNullOrEmpty(ludusaviExe))
                 {
                     CreateLudusaviShortcut(ludusaviExe);
                 }
 
-                await InstallHydraLauncherAsync();
+                _ = Task.Run(() => InstallHydraLauncherInBackgroundAsync(globalDirectory));
 
                 SalsaLogger.Info("CloudSave: environment ready, open Ludusavi normally to set up the cloud remote and back up.");
                 return true;
@@ -51,127 +43,65 @@ namespace SalsaNOW
             }
         }
 
-        private static string ResolveTargetDirectory(string globalDirectory)
+        private static async Task InstallHydraLauncherInBackgroundAsync(string globalDirectory)
         {
             try
             {
-                var rootDrive = Path.GetPathRoot(globalDirectory);
-                var matchingDirs = Directory.GetDirectories(rootDrive, "*", SearchOption.TopDirectoryOnly)
-                    .Where(d => !d.Contains("Windows") && !d.Contains("Program") && !d.Contains("Apps") && !d.Contains("Asgard"));
+                string toolsDir = Path.Combine(globalDirectory, "Tools", "hydra");
+                string installerPath = Path.Combine(toolsDir, "Hydra-Setup.exe");
+
+                if (!File.Exists(installerPath))
+                {
+                    Directory.CreateDirectory(toolsDir);
+                    string url = "https://github.com/hydralinks/hydra/releases/latest/download/hydra-setup.exe";
                     
-                if (matchingDirs.Any())
-                {
-                    string foundHashDir = matchingDirs.FirstOrDefault();
-                    string kioskPath = Path.Combine(foundHashDir, "userprofiles", "kiosk");
-                    if (Directory.Exists(kioskPath) || Directory.Exists(Path.Combine(foundHashDir, "userprofiles")))
-                    {
-                        return kioskPath;
-                    }
+                    SalsaLogger.Info("CloudSave: downloading Hydra Launcher in background...");
+                    await DownloadFileAsync(url, installerPath);
                 }
-            }
-            catch { }
 
-            return globalDirectory;
-        }
-
-        private static string EnsureSubstDrive(string targetPath)
-        {
-            targetPath = targetPath.TrimEnd('\\');
-
-            try
-            {
-                var psi = new ProcessStartInfo("cmd.exe", "/c subst")
+                SalsaLogger.Info("CloudSave: installing Hydra Launcher silently in background...");
+                
+                ProcessStartInfo psi = new ProcessStartInfo
                 {
-                    RedirectStandardOutput = true,
+                    FileName = installerPath,
+                    Arguments = "/S /VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
                 };
+
                 using (var process = Process.Start(psi))
                 {
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
-
-                    string[] lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    foreach (string line in lines)
+                    if (process != null)
                     {
-                        if (line.Contains("=>") && line.IndexOf(targetPath, StringComparison.OrdinalIgnoreCase) >= 0)
+                        await Task.Run(() => process.WaitForExit());
+                        
+                        if (process.ExitCode == 0)
                         {
-                            string existingDrive = line.Substring(0, 2);
-                            SalsaLogger.Info($"CloudSave: subst alias already exists at {existingDrive}");
-                            return existingDrive;
+                            SalsaLogger.Info("CloudSave: Hydra Launcher installed successfully.");
+                        }
+                        else
+                        {
+                            SalsaLogger.Error($"CloudSave: Hydra Launcher installation failed with exit code {process.ExitCode}");
                         }
                     }
                 }
             }
-            catch { }
-
-            var drives = DriveInfo.GetDrives().Select(d => char.ToUpper(d.Name[0])).ToHashSet();
-            char[] letters = { 'Y', 'X', 'W', 'V', 'U', 'T', 'S', 'R', 'Q', 'P', 'O', 'N', 'M', 'L', 'K', 'J', 'H', 'G' };
-            
-            string driveToUse = null;
-            foreach (char c in letters)
-            {
-                if (!drives.Contains(c))
-                {
-                    driveToUse = c + ":";
-                    break;
-                }
-            }
-
-            if (driveToUse == null)
-            {
-                SalsaLogger.Error("CloudSave: No free drive letters available for subst.");
-                return null;
-            }
-
-            try
-            {
-                var psi = new ProcessStartInfo("cmd.exe", $"/c subst {driveToUse} \"{targetPath}\"")
-                {
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                };
-                Process.Start(psi)?.WaitForExit();
-                SalsaLogger.Info($"CloudSave: Created subst alias {driveToUse} -> {targetPath}");
-                return driveToUse;
-            }
             catch (Exception ex)
             {
-                SalsaLogger.Error("CloudSave: failed to create subst drive: " + ex.Message);
-                return null;
+                SalsaLogger.Error($"CloudSave: failed to install Hydra Launcher in background: {ex.Message}");
             }
         }
 
-        private static void TryHideDriveSilent(string driveLetter)
+        private static void PatchLudusaviConfig(string globalDirectory, string rcloneExePath)
         {
             try
             {
-                char letter = char.ToUpper(driveLetter[0]);
-                int bit = 1 << (letter - 'A');
-                using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", true))
-                {
-                    if (key != null)
-                    {
-                        int current = (int)key.GetValue("NoDrives", 0);
-                        key.SetValue("NoDrives", current | bit, RegistryValueKind.DWord);
-                    }
-                }
-            }
-            catch { }
-        }
-
-        private static void PatchLudusaviConfig(string targetDirectory, string aliasDrive, string rcloneExePath)
-        {
-            try
-            {
-                Directory.CreateDirectory(targetDirectory);
-
                 string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
                 string configPath = Path.Combine(appData, "ludusavi", "config.yaml");
                 Directory.CreateDirectory(Path.GetDirectoryName(configPath));
 
-                string normalizedGlobalDir = targetDirectory.TrimEnd('\\').Replace('\\', '/');
-                string normalizedAlias = aliasDrive.TrimEnd('\\', '/'); 
+                string normalizedGlobalDir = globalDirectory.TrimEnd('\\').Replace('\\', '/');
                 string normalizedRclone = !string.IsNullOrEmpty(rcloneExePath) ? rcloneExePath.Replace('\\', '/') : "";
 
                 var lines = File.Exists(configPath)
@@ -180,54 +110,60 @@ namespace SalsaNOW
 
                 if (!string.IsNullOrEmpty(normalizedRclone))
                 {
-                    int rcloneIndex = lines.FindIndex(l => l.StartsWith("rclone:"));
-                    if (rcloneIndex != -1)
+                    bool rcloneSet = false;
+                    for (int i = 0; i < lines.Count; i++)
                     {
-                        int execIndex = lines.FindIndex(rcloneIndex + 1, l => l.TrimStart().StartsWith("executable:"));
-                        if (execIndex != -1 && (execIndex == rcloneIndex + 1 || lines[execIndex - 1].StartsWith("rclone:")))
+                        if (lines[i].TrimStart().StartsWith("executable:"))
                         {
-                            lines[execIndex] = $"  executable: \"{normalizedRclone}\"";
+                            lines[i] = $"  executable: \"{normalizedRclone}\"";
+                            rcloneSet = true;
+                            break;
                         }
-                        else
+                    }
+
+                    if (!rcloneSet)
+                    {
+                        int rcloneIndex = lines.FindIndex(l => l.TrimEnd() == "rclone:");
+                        if (rcloneIndex != -1)
                         {
                             lines.Insert(rcloneIndex + 1, $"  executable: \"{normalizedRclone}\"");
                         }
-                    }
-                    else
-                    {
-                        lines.Add("rclone:");
-                        lines.Add($"  executable: \"{normalizedRclone}\"");
+                        else
+                        {
+                            lines.Add("rclone:");
+                            lines.Add($"  executable: \"{normalizedRclone}\"");
+                        }
                     }
                 }
 
                 string marker = $"source: \"{normalizedGlobalDir}\"";
-                
-                lines.RemoveAll(l => l.Contains("source:") || l.Contains("target:") || l.Contains("- kind: bidirectional"));
+                if (!lines.Any(l => l.Contains(marker)))
+                {
+                    int redirectsIndex = lines.FindIndex(l => l.TrimEnd() == "redirects:");
+                    var newEntry = new[]
+                    {
+                        "  - kind: bidirectional",
+                        $"    {marker}",
+                        $"    target: \"{normalizedGlobalDir}/\""
+                    };
 
-                int redirectsIndex = lines.FindIndex(l => l.StartsWith("redirects:"));
-                var newEntry = new[]
-                {
-                    "  - kind: bidirectional",
-                    $"    {marker}",
-                    $"    target: \"{normalizedAlias}\""
-                };
-
-                if (redirectsIndex == -1)
-                {
-                    lines.Add("redirects:");
-                    lines.AddRange(newEntry);
-                }
-                else
-                {
-                    lines.InsertRange(redirectsIndex + 1, newEntry);
+                    if (redirectsIndex == -1)
+                    {
+                        lines.Add("redirects:");
+                        lines.AddRange(newEntry);
+                    }
+                    else
+                    {
+                        lines.InsertRange(redirectsIndex + 1, newEntry);
+                    }
                 }
 
                 File.WriteAllLines(configPath, lines);
-                SalsaLogger.Info($"CloudSave: updated Ludusavi config.yaml with dynamic path: {targetDirectory}");
+                SalsaLogger.Info($"CloudSave: updated Ludusavi config.yaml (Rclone: {normalizedRclone}, Redirects: {normalizedGlobalDir}).");
             }
             catch (Exception ex)
             {
-                SalsaLogger.Error("CloudSave: failed to patch Ludusavi config: " + ex.Message);
+                SalsaLogger.Error($"CloudSave: failed to patch Ludusavi config: {ex.Message}");
             }
         }
 
@@ -299,92 +235,22 @@ namespace SalsaNOW
             }
         }
 
-        private static async Task InstallHydraLauncherAsync()
-        {
-            try
-            {
-                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                string hydraExePath = Path.Combine(localAppData, "Programs", "hydra", "Hydra.exe");
-
-                if (!File.Exists(hydraExePath))
-                {
-                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                    hydraExePath = Path.Combine(appData, "hydra", "Hydra.exe");
-                }
-
-                if (File.Exists(hydraExePath))
-                {
-                    SalsaLogger.Info("CloudSave: Hydra Launcher is already installed. Skipping...");
-                    return;
-                }
-
-                string tempPath = Path.Combine(Path.GetTempPath(), "hydra-installer.exe");
-                string url = "https://github.com/hydralauncher/hydra-installer/releases/download/v1.0.0/hydra-installer.exe";
-
-                if (!File.Exists(tempPath))
-                {
-                    SalsaLogger.Info("CloudSave: downloading Hydra Launcher installer...");
-                    await DownloadFileAsync(url, tempPath);
-                }
-
-                SalsaLogger.Info("CloudSave: starting Hydra Launcher silent installation...");
-                ProcessStartInfo psi = new ProcessStartInfo
-                {
-                    FileName = tempPath,
-                    Arguments = "/S",
-                    UseShellExecute = true
-                };
-                
-                using (var process = Process.Start(psi))
-                {
-                    if (process != null)
-                    {
-                        await Task.Run(() => process.WaitForExit());
-                        SalsaLogger.Info("CloudSave: Hydra Launcher installed successfully and is ready to use.");
-                    }
-                }
-
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
-            }
-            catch (Exception ex)
-            {
-                SalsaLogger.Error($"CloudSave: failed to install Hydra Launcher: {ex.Message}");
-            }
-        }
-
-        private static async Task DownloadFileAsync(string url, string destinationPath, int maxRetries = 3)
+        private static async Task DownloadFileAsync(string url, string destinationPath)
         {
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
             using (var handler = new HttpClientHandler { AllowAutoRedirect = true })
             using (var client = new HttpClient(handler))
             {
                 client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-                client.Timeout = TimeSpan.FromMinutes(5);
-
-                for (int attempt = 1; attempt <= maxRetries; attempt++)
+                using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
                 {
-                    try
+                    response.EnsureSuccessStatusCode();
+                    using (var streamToReadFrom = await response.Content.ReadAsStreamAsync())
                     {
-                        using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+                        using (Stream streamToWriteTo = File.Open(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None))
                         {
-                            response.EnsureSuccessStatusCode();
-                            using (var streamToReadFrom = await response.Content.ReadAsStreamAsync())
-                            using (Stream streamToWriteTo = File.Open(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                            {
-                                await streamToReadFrom.CopyToAsync(streamToWriteTo);
-                                return;
-                            }
+                            await streamToReadFrom.CopyToAsync(streamToWriteTo);
                         }
-                    }
-                    catch (Exception)
-                    {
-                        if (attempt == maxRetries)
-                            throw;
-                        
-                        await Task.Delay(2000);
                     }
                 }
             }
