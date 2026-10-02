@@ -18,7 +18,9 @@ namespace SalsaNOW
             {
                 string toolsDir = Path.Combine(globalDirectory, "Tools");
 
-                string alias = EnsureSubstDrive(globalDirectory);
+                string targetDirectory = ResolveTargetDirectory(globalDirectory);
+
+                string alias = EnsureSubstDrive(targetDirectory);
                 if (string.IsNullOrEmpty(alias)) 
                     return false;
 
@@ -30,7 +32,7 @@ namespace SalsaNOW
                 string ludusaviExe = await EnsureDownloadedAsync(toolsDir, "ludusavi",
                     "https://github.com/mtkennerly/ludusavi/releases/latest/download/ludusavi-v0.31.0-win64.zip", "ludusavi.exe");
 
-                PatchLudusaviConfig(globalDirectory, alias, rcloneExe);
+                PatchLudusaviConfig(targetDirectory, alias, rcloneExe);
 
                 if (!string.IsNullOrEmpty(ludusaviExe))
                 {
@@ -47,6 +49,29 @@ namespace SalsaNOW
                 SalsaLogger.Error("CloudSave: setup failed: " + ex.Message);
                 return false;
             }
+        }
+
+        private static string ResolveTargetDirectory(string globalDirectory)
+        {
+            try
+            {
+                var rootDrive = Path.GetPathRoot(globalDirectory);
+                var matchingDirs = Directory.GetDirectories(rootDrive, "*", SearchOption.TopDirectoryOnly)
+                    .Where(d => !d.Contains("Windows") && !d.Contains("Program") && !d.Contains("Apps") && !d.Contains("Asgard"));
+                    
+                if (matchingDirs.Any())
+                {
+                    string foundHashDir = matchingDirs.FirstOrDefault();
+                    string kioskPath = Path.Combine(foundHashDir, "userprofiles", "kiosk");
+                    if (Directory.Exists(kioskPath) || Directory.Exists(Path.Combine(foundHashDir, "userprofiles")))
+                    {
+                        return kioskPath;
+                    }
+                }
+            }
+            catch { }
+
+            return globalDirectory;
         }
 
         private static string EnsureSubstDrive(string targetPath)
@@ -132,35 +157,13 @@ namespace SalsaNOW
                     }
                 }
             }
-            catch
-            {
-            }
+            catch { }
         }
 
-        private static void PatchLudusaviConfig(string globalDirectory, string aliasDrive, string rcloneExePath)
+        private static void PatchLudusaviConfig(string targetDirectory, string aliasDrive, string rcloneExePath)
         {
             try
             {
-                string targetDirectory = globalDirectory;
-                
-                try
-                {
-                    var rootDrive = Path.GetPathRoot(globalDirectory);
-                    var matchingDirs = Directory.GetDirectories(rootDrive, "*", SearchOption.TopDirectoryOnly)
-                        .Where(d => !d.Contains("Windows") && !d.Contains("Program") && !d.Contains("Apps") && !d.Contains("Asgard"));
-                        
-                    if (matchingDirs.Any())
-                    {
-                        string foundHashDir = matchingDirs.FirstOrDefault();
-                        string kioskPath = Path.Combine(foundHashDir, "userprofiles", "kiosk");
-                        if (Directory.Exists(kioskPath) || Directory.Exists(Path.Combine(foundHashDir, "userprofiles")))
-                        {
-                            targetDirectory = kioskPath;
-                        }
-                    }
-                }
-                catch { }
-
                 Directory.CreateDirectory(targetDirectory);
 
                 string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -300,6 +303,21 @@ namespace SalsaNOW
         {
             try
             {
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                string hydraExePath = Path.Combine(localAppData, "Programs", "hydra", "Hydra.exe");
+
+                if (!File.Exists(hydraExePath))
+                {
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                    hydraExePath = Path.Combine(appData, "hydra", "Hydra.exe");
+                }
+
+                if (File.Exists(hydraExePath))
+                {
+                    SalsaLogger.Info("CloudSave: Hydra Launcher is already installed. Skipping...");
+                    return;
+                }
+
                 string tempPath = Path.Combine(Path.GetTempPath(), "hydra-installer.exe");
                 string url = "https://github.com/hydralauncher/hydra-installer/releases/download/v1.0.0/hydra-installer.exe";
 
@@ -317,7 +335,19 @@ namespace SalsaNOW
                     UseShellExecute = true
                 };
                 
-                Process.Start(psi);
+                using (var process = Process.Start(psi))
+                {
+                    if (process != null)
+                    {
+                        await Task.Run(() => process.WaitForExit());
+                        SalsaLogger.Info("CloudSave: Hydra Launcher installed successfully and is ready to use.");
+                    }
+                }
+
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
             }
             catch (Exception ex)
             {
