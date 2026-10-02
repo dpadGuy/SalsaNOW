@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -9,7 +8,6 @@ using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
-using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 namespace SalsaNOW
@@ -49,10 +47,9 @@ namespace SalsaNOW
                     return false;
                 }
 
-                string alias = EnsureUserHashJunction(realSavesRoot);
-                if (string.IsNullOrEmpty(alias)) return false;
+                string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-                PatchLudusaviConfig(realSavesRoot, alias, rcloneExe);
+                PatchLudusaviConfig(realSavesRoot, userProfile, rcloneExe);
                 CreateLudusaviShortcut(ludusaviExe);
 
                 SalsaLogger.Info("CloudSave: environment ready, open Ludusavi normally to set up the cloud remote and back up.");
@@ -125,112 +122,7 @@ namespace SalsaNOW
             return string.Join("/", commonParts.Take(commonLen));
         }
 
-        private static string EnsureUserHashJunction(string targetPath)
-        {
-            targetPath = targetPath.Replace('/', '\\').TrimEnd('\\');
-
-            try
-            {
-                // Get user name and generate short hash
-                string userName = Environment.UserName;
-                string userHash = GetShortHash(userName);
-                string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                
-                // Create junction path in C:\Users\<User>\SalsaNOW_<hash>
-                string junctionPath = Path.Combine(userProfile, $"SalsaNOW_{userHash}");
-
-                // Check if junction already exists and points to correct location
-                if (Directory.Exists(junctionPath))
-                {
-                    string existingTarget = ResolveJunctionTarget(junctionPath);
-                    if (!string.IsNullOrEmpty(existingTarget) && 
-                        existingTarget.TrimEnd('\\').Equals(targetPath.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
-                    {
-                        SalsaLogger.Info($"CloudSave: junction already exists at {junctionPath}");
-                        return junctionPath;
-                    }
-                    
-                    // Remove old junction
-                    try
-                    {
-                        Directory.Delete(junctionPath);
-                    }
-                    catch { }
-                }
-
-                // Create new junction point
-                if (!CreateJunctionPoint(targetPath, junctionPath))
-                {
-                    return null;
-                }
-
-                SalsaLogger.Info($"CloudSave: created junction {junctionPath} -> {targetPath}");
-                return junctionPath;
-            }
-            catch (Exception ex)
-            {
-                SalsaLogger.Error("CloudSave: failed to create user hash junction: " + ex.Message);
-                return null;
-            }
-        }
-
-        private static string GetShortHash(string input)
-        {
-            try
-            {
-                using (System.Security.Cryptography.MD5 md5 = System.Security.Cryptography.MD5.Create())
-                {
-                    byte[] inputBytes = Encoding.UTF8.GetBytes(input);
-                    byte[] hashBytes = md5.ComputeHash(inputBytes);
-                    StringBuilder sb = new StringBuilder();
-                    for (int i = 0; i < hashBytes.Length; i++)
-                    {
-                        sb.Append(hashBytes[i].ToString("x2"));
-                    }
-                    // Return first 8 characters of hash
-                    return sb.ToString().Substring(0, 8);
-                }
-            }
-            catch (Exception ex)
-            {
-                SalsaLogger.Error("CloudSave: failed to generate hash: " + ex.Message);
-                return "salsa";
-            }
-        }
-
-        private static bool CreateJunctionPoint(string targetPath, string junctionPath)
-        {
-            try
-            {
-                var psi = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{junctionPath}\" \"{targetPath}\"")
-                {
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                using (var process = Process.Start(psi))
-                {
-                    process.WaitForExit();
-                    if (process.ExitCode != 0)
-                    {
-                        string error = process.StandardError.ReadToEnd();
-                        SalsaLogger.Error($"CloudSave: mklink failed with code {process.ExitCode}: {error}");
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                SalsaLogger.Error("CloudSave: failed to create junction point: " + ex.Message);
-                return false;
-            }
-        }
-
-        private static void PatchLudusaviConfig(string realSavesRoot, string aliasDrive, string rcloneExePath)
+        private static void PatchLudusaviConfig(string realSavesRoot, string userProfilePath, string rcloneExePath)
         {
             try
             {
@@ -239,7 +131,7 @@ namespace SalsaNOW
                 Directory.CreateDirectory(Path.GetDirectoryName(configPath));
 
                 string normalizedSource = realSavesRoot.TrimEnd('/');
-                string normalizedAlias = aliasDrive.TrimEnd('\\', '/') + "/";
+                string normalizedAlias = userProfilePath.Replace('\\', '/').TrimEnd('/') + "/";
                 string normalizedRclone = !string.IsNullOrEmpty(rcloneExePath) ? rcloneExePath.Replace('\\', '/') : "";
 
                 var lines = File.Exists(configPath)
@@ -399,6 +291,5 @@ namespace SalsaNOW
                 }
             }
         }
-
     }
 }
