@@ -233,25 +233,26 @@ namespace SalsaNOW
 
                 if (!string.IsNullOrEmpty(normalizedRclone))
                 {
-                    int cloudIndex = lines.FindIndex(l => l.TrimEnd() == "cloud:");
-                    if (cloudIndex == -1)
+                    int appsIndex = lines.FindIndex(l => l.TrimEnd() == "apps:");
+                    if (appsIndex == -1)
                     {
-                        lines.Add("cloud:");
+                        lines.Add("apps:");
                         lines.Add("  rclone:");
                         lines.Add($"    path: \"{normalizedRclone}\"");
+                        lines.Add("    arguments: \"--fast-list --ignore-checksum\"");
                     }
                     else
                     {
-                        int rcloneIndex = lines.FindIndex(cloudIndex + 1, l => l.Trim() == "rclone:");
+                        int rcloneIndex = lines.FindIndex(appsIndex + 1, l => l.Trim() == "rclone:");
                         if (rcloneIndex == -1)
                         {
-                            lines.Insert(cloudIndex + 1, "  rclone:");
-                            lines.Insert(cloudIndex + 2, $"    path: \"{normalizedRclone}\"");
+                            lines.Insert(appsIndex + 1, "  rclone:");
+                            lines.Insert(appsIndex + 2, $"    path: \"{normalizedRclone}\"");
                         }
                         else
                         {
                             int pathIndex = lines.FindIndex(rcloneIndex + 1, l => l.Trim().StartsWith("path:"));
-                            if (pathIndex != -1 && pathIndex < lines.Count && lines[pathIndex].StartsWith("    "))
+                            if (pathIndex != -1 && lines[pathIndex].StartsWith("    "))
                                 lines[pathIndex] = $"    path: \"{normalizedRclone}\"";
                             else
                                 lines.Insert(rcloneIndex + 1, $"    path: \"{normalizedRclone}\"");
