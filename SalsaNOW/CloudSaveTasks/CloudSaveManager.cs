@@ -49,10 +49,8 @@ namespace SalsaNOW
                     return false;
                 }
 
-                string alias = EnsureSubstDrive(realSavesRoot);
+                string alias = EnsureUserHashJunction(realSavesRoot);
                 if (string.IsNullOrEmpty(alias)) return false;
-
-                TryHideDriveSilent(alias);
 
                 PatchLudusaviConfig(realSavesRoot, alias, rcloneExe);
                 CreateLudusaviShortcut(ludusaviExe);
@@ -127,91 +125,108 @@ namespace SalsaNOW
             return string.Join("/", commonParts.Take(commonLen));
         }
 
-        private static string EnsureSubstDrive(string targetPath)
+        private static string EnsureUserHashJunction(string targetPath)
         {
             targetPath = targetPath.Replace('/', '\\').TrimEnd('\\');
 
             try
             {
-                var psi = new ProcessStartInfo("cmd.exe", "/c subst")
-                {
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                using (var process = Process.Start(psi))
-                {
-                    string output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
+                // Get user name and generate short hash
+                string userName = Environment.UserName;
+                string userHash = GetShortHash(userName);
+                string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                
+                // Create junction path in C:\Users\<User>\SalsaNOW_<hash>
+                string junctionPath = Path.Combine(userProfile, $"SalsaNOW_{userHash}");
 
-                    foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                // Check if junction already exists and points to correct location
+                if (Directory.Exists(junctionPath))
+                {
+                    string existingTarget = ResolveJunctionTarget(junctionPath);
+                    if (!string.IsNullOrEmpty(existingTarget) && 
+                        existingTarget.TrimEnd('\\').Equals(targetPath.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
                     {
-                        if (line.Contains("=>") && line.IndexOf(targetPath, StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            string existingDrive = line.Substring(0, 2);
-                            SalsaLogger.Info($"CloudSave: subst alias already exists at {existingDrive}");
-                            return existingDrive;
-                        }
+                        SalsaLogger.Info($"CloudSave: junction already exists at {junctionPath}");
+                        return junctionPath;
                     }
+                    
+                    // Remove old junction
+                    try
+                    {
+                        Directory.Delete(junctionPath);
+                    }
+                    catch { }
                 }
-            }
-            catch { }
 
-            var usedDrives = DriveInfo.GetDrives().Select(d => char.ToUpper(d.Name[0])).ToHashSet();
-            char[] letters = { 'Y', 'X', 'W', 'V', 'U', 'T', 'S', 'R', 'Q', 'P', 'O', 'N', 'M', 'L', 'K', 'J', 'H', 'G' };
-
-            string driveToUse = null;
-            foreach (char c in letters)
-            {
-                if (!usedDrives.Contains(c))
+                // Create new junction point
+                if (!CreateJunctionPoint(targetPath, junctionPath))
                 {
-                    driveToUse = c + ":";
-                    break;
+                    return null;
                 }
-            }
 
-            if (driveToUse == null)
-            {
-                SalsaLogger.Error("CloudSave: no free drive letters available for subst.");
-                return null;
-            }
-
-            try
-            {
-                var psi = new ProcessStartInfo("cmd.exe", $"/c subst {driveToUse} \"{targetPath}\"")
-                {
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                };
-                Process.Start(psi)?.WaitForExit();
-                SalsaLogger.Info($"CloudSave: created subst alias {driveToUse} -> {targetPath}");
-                return driveToUse;
+                SalsaLogger.Info($"CloudSave: created junction {junctionPath} -> {targetPath}");
+                return junctionPath;
             }
             catch (Exception ex)
             {
-                SalsaLogger.Error("CloudSave: failed to create subst drive: " + ex.Message);
+                SalsaLogger.Error("CloudSave: failed to create user hash junction: " + ex.Message);
                 return null;
             }
         }
 
-        private static void TryHideDriveSilent(string driveLetter)
+        private static string GetShortHash(string input)
         {
             try
             {
-                char letter = char.ToUpper(driveLetter[0]);
-                int bit = 1 << (letter - 'A');
-                using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", true))
+                using (System.Security.Cryptography.MD5 md5 = System.Security.Cryptography.MD5.Create())
                 {
-                    if (key != null)
+                    byte[] inputBytes = Encoding.UTF8.GetBytes(input);
+                    byte[] hashBytes = md5.ComputeHash(inputBytes);
+                    StringBuilder sb = new StringBuilder();
+                    for (int i = 0; i < hashBytes.Length; i++)
                     {
-                        int current = (int)key.GetValue("NoDrives", 0);
-                        key.SetValue("NoDrives", current | bit, RegistryValueKind.DWord);
+                        sb.Append(hashBytes[i].ToString("x2"));
                     }
+                    // Return first 8 characters of hash
+                    return sb.ToString().Substring(0, 8);
                 }
             }
             catch (Exception ex)
             {
-                SalsaLogger.Error("CloudSave: failed to hide drive letter (non-fatal): " + ex.Message);
+                SalsaLogger.Error("CloudSave: failed to generate hash: " + ex.Message);
+                return "salsa";
+            }
+        }
+
+        private static bool CreateJunctionPoint(string targetPath, string junctionPath)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{junctionPath}\" \"{targetPath}\"")
+                {
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using (var process = Process.Start(psi))
+                {
+                    process.WaitForExit();
+                    if (process.ExitCode != 0)
+                    {
+                        string error = process.StandardError.ReadToEnd();
+                        SalsaLogger.Error($"CloudSave: mklink failed with code {process.ExitCode}: {error}");
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("CloudSave: failed to create junction point: " + ex.Message);
+                return false;
             }
         }
 
