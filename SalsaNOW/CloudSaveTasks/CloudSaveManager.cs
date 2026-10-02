@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.Win32;
 
@@ -23,13 +24,13 @@ namespace SalsaNOW
 
                 TryHideDriveSilent(alias);
 
-                PatchLudusaviRedirect(globalDirectory, alias);
-
-                await EnsureDownloadedAsync(toolsDir, "rclone",
+                string rcloneExe = await EnsureDownloadedAsync(toolsDir, "rclone",
                     "https://downloads.rclone.org/rclone-current-windows-amd64.zip", "rclone.exe");
 
                 string ludusaviExe = await EnsureDownloadedAsync(toolsDir, "ludusavi",
                     "https://github.com/mtkennerly/ludusavi/releases/latest/download/ludusavi-v0.31.0-win64.zip", "ludusavi.exe");
+
+                PatchLudusaviConfig(globalDirectory, alias, rcloneExe);
 
                 if (!string.IsNullOrEmpty(ludusaviExe))
                 {
@@ -136,46 +137,79 @@ namespace SalsaNOW
             }
         }
 
-        private static void PatchLudusaviRedirect(string globalDirectory, string aliasDrive)
+        private static void PatchLudusaviConfig(string globalDirectory, string aliasDrive, string rcloneExePath)
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string configPath = Path.Combine(appData, "ludusavi", "config.yaml");
-            Directory.CreateDirectory(Path.GetDirectoryName(configPath));
-
-            string longSource = globalDirectory.TrimEnd('\\').Replace('\\', '/');
-            string targetValue = aliasDrive + "/";
-            string marker = $"source: \"{longSource}\"";
-
-            var lines = File.Exists(configPath)
-                ? File.ReadAllLines(configPath).ToList()
-                : new System.Collections.Generic.List<string>();
-
-            if (lines.Any(l => l.Contains(marker)))
+            try
             {
-                SalsaLogger.Info("CloudSave: redirect already present in Ludusavi config.yaml.");
-                return;
+                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string configPath = Path.Combine(appData, "ludusavi", "config.yaml");
+                Directory.CreateDirectory(Path.GetDirectoryName(configPath));
+
+                string normalizedGlobalDir = globalDirectory.TrimEnd('\\').Replace('\\', '/');
+                string normalizedAlias = aliasDrive.TrimEnd('\\', '/');
+                string normalizedRclone = !string.IsNullOrEmpty(rcloneExePath) ? rcloneExePath.Replace('\\', '/') : "";
+
+                var lines = File.Exists(configPath)
+                    ? File.ReadAllLines(configPath).ToList()
+                    : new System.Collections.Generic.List<string>();
+
+                if (!string.IsNullOrEmpty(normalizedRclone))
+                {
+                    bool rcloneSet = false;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        if (lines[i].TrimStart().StartsWith("executable:"))
+                        {
+                            lines[i] = $"  executable: \"{normalizedRclone}\"";
+                            rcloneSet = true;
+                            break;
+                        }
+                    }
+
+                    if (!rcloneSet)
+                    {
+                        int rcloneIndex = lines.FindIndex(l => l.TrimEnd() == "rclone:");
+                        if (rcloneIndex != -1)
+                        {
+                            lines.Insert(rcloneIndex + 1, $"  executable: \"{normalizedRclone}\"");
+                        }
+                        else
+                        {
+                            lines.Add("rclone:");
+                            lines.Add($"  executable: \"{normalizedRclone}\"");
+                        }
+                    }
+                }
+
+                string marker = $"source: \"{normalizedGlobalDir}\"";
+                if (!lines.Any(l => l.Contains(marker)))
+                {
+                    int redirectsIndex = lines.FindIndex(l => l.TrimEnd() == "redirects:");
+                    var newEntry = new[]
+                    {
+                        "  - kind: bidirectional",
+                        $"    {marker}",
+                        $"    target: \"{normalizedAlias}\""
+                    };
+
+                    if (redirectsIndex == -1)
+                    {
+                        lines.Add("redirects:");
+                        lines.AddRange(newEntry);
+                    }
+                    else
+                    {
+                        lines.InsertRange(redirectsIndex + 1, newEntry);
+                    }
+                }
+
+                File.WriteAllLines(configPath, lines);
+                SalsaLogger.Info("CloudSave: updated Ludusavi config.yaml (Rclone path & Redirects).");
             }
-
-            int redirectsIndex = lines.FindIndex(l => l.TrimEnd() == "redirects:");
-            var newEntry = new[]
+            catch (Exception ex)
             {
-                "  - kind: bidirectional",
-                $"    {marker}",
-                $"    target: \"{targetValue}\""
-            };
-
-            if (redirectsIndex == -1)
-            {
-                lines.Add("redirects:");
-                lines.AddRange(newEntry);
+                SalsaLogger.Error("CloudSave: failed to patch Ludusavi config: " + ex.Message);
             }
-            else
-            {
-                lines.InsertRange(redirectsIndex + 1, newEntry);
-            }
-
-            File.WriteAllLines(configPath, lines);
-            SalsaLogger.Info("CloudSave: added subst redirect to Ludusavi config.yaml.");
         }
 
         private static async Task<string> EnsureDownloadedAsync(string toolsRoot, string name, string url, string exeName)
@@ -191,12 +225,8 @@ namespace SalsaNOW
                 Directory.CreateDirectory(toolsDir);
                 string zipPath = Path.Combine(toolsDir, name + ".zip");
 
-                using (var wc = new WebClient())
-                {
-                    wc.Headers.Add("User-Agent", "SalsaNOW-CloudSave");
-                    SalsaLogger.Info($"CloudSave: downloading {name}...");
-                    await wc.DownloadFileTaskAsync(new Uri(url), zipPath);
-                }
+                SalsaLogger.Info($"CloudSave: downloading {name}...");
+                await DownloadFileAsync(url, zipPath);
 
                 string extractDir = Path.Combine(toolsDir, "extract");
                 if (Directory.Exists(extractDir)) 
@@ -260,11 +290,7 @@ namespace SalsaNOW
                 if (!File.Exists(tempPath))
                 {
                     SalsaLogger.Info("CloudSave: downloading Hydra Launcher...");
-                    using (var wc = new WebClient())
-                    {
-                        wc.Headers.Add("User-Agent", "SalsaNOW-Setup");
-                        await wc.DownloadFileTaskAsync(new Uri(url), tempPath);
-                    }
+                    await DownloadFileAsync(url, tempPath);
                 }
 
                 SalsaLogger.Info("CloudSave: starting Hydra Launcher silent installation...");
@@ -282,6 +308,26 @@ namespace SalsaNOW
                 SalsaLogger.Error($"CloudSave: failed to install Hydra Launcher: {ex.Message}");
             }
         }
+
+        private static async Task DownloadFileAsync(string url, string destinationPath)
+        {
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
+            using (var handler = new HttpClientHandler { AllowAutoRedirect = true })
+            using (var client = new HttpClient(handler))
+            {
+                client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                using (var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead))
+                {
+                    response.EnsureSuccessStatusCode();
+                    using (var streamToReadFrom = await response.Content.ReadAsStreamAsync())
+                    {
+                        using (Stream streamToWriteTo = File.Open(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                        {
+                            await streamToReadFrom.CopyToAsync(streamToWriteTo);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
-
