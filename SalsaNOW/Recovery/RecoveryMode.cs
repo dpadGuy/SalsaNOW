@@ -179,15 +179,20 @@ namespace SalsaNOW
                             targetPath = Path.Combine(globalDirectory, app.exeName);
                         }
 
-                        if (!File.Exists(targetPath))
-                            continue;
-
-                        AppInstaller.CreateShortcut(
+                        RestoreDefaultShortcut(
+                            globalDirectory,
                             app.name,
                             desktopPath,
                             targetPath,
                             Path.GetDirectoryName(targetPath));
                     }
+
+                    RestoreDefaultShortcut(
+                        globalDirectory,
+                        "Steam",
+                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "Steam.lnk"),
+                        @"C:\Program Files (x86)\Steam\steam.exe",
+                        @"C:\Program Files (x86)\Steam");
                 }
 
                 Console.Clear();
@@ -198,6 +203,57 @@ namespace SalsaNOW
             catch (Exception ex)
             {
                 SalsaLogger.Error(ex.ToString());
+            }
+        }
+
+        private static void RestoreDefaultShortcut(
+            string globalDirectory,
+            string name,
+            string desktopPath,
+            string targetPath,
+            string workDir)
+        {
+            string fileName = Path.GetFileName(desktopPath);
+            BackgroundTasks.ClearSavedShortcut(globalDirectory, fileName);
+            TryDeleteFile(desktopPath);
+
+            if (!File.Exists(targetPath))
+                return;
+
+            AppInstaller.CreateShortcut(name, desktopPath, targetPath, workDir, false);
+            BackgroundTasks.RememberDesktopShortcut(globalDirectory, desktopPath);
+            ReplacePinnedShortcut(desktopPath);
+            SalsaLogger.Info("Restored default shortcut: " + fileName);
+        }
+
+        private static void ReplacePinnedShortcut(string desktopPath)
+        {
+            if (!File.Exists(desktopPath))
+                return;
+
+            string pinnedDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "OpenShell",
+                "Pinned");
+            Directory.CreateDirectory(pinnedDir);
+
+            string pinned = Path.Combine(pinnedDir, Path.GetFileName(desktopPath));
+            TryDeleteFile(pinned);
+            File.Copy(desktopPath, pinned, true);
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return;
+
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+            }
+            catch
+            {
             }
         }
 

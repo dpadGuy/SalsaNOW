@@ -204,8 +204,7 @@ namespace SalsaNOW
 
         private static void CreateSteamDesktopShortcut(string globalDirectory)
         {
-            if (File.Exists(Path.Combine(globalDirectory, "Backup Shortcuts", "Steam.lnk"))
-                || File.Exists(Path.Combine(globalDirectory, "Shortcuts", "Steam.lnk")))
+            if (BackgroundTasks.HasSavedShortcut(globalDirectory, "Steam.lnk"))
             {
                 SalsaLogger.Info("Steam shortcut already saved. Skipping desktop create.");
                 return;

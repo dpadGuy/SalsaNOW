@@ -33,10 +33,11 @@ namespace SalsaNOW
         private static DateTime _appliedConfigWriteTime = DateTime.MinValue;
         private static string _lastConfigError;
 
-        public static bool TryReadHostFlags(out bool steamSilentLaunch, out bool bingWallpaper)
+        public static bool TryReadHostFlags(out bool steamSilentLaunch, out bool bingWallpaper, out bool steamInput)
         {
             steamSilentLaunch = false;
             bingWallpaper = false;
+            steamInput = false;
             if (!File.Exists(ConfigPath))
                 return false;
 
@@ -47,6 +48,7 @@ namespace SalsaNOW
 
             steamSilentLaunch = settings.SteamSilentLaunch == true;
             bingWallpaper = settings.BingWallpaper == true;
+            steamInput = settings.SteamInput == true;
             return true;
         }
 
@@ -1120,6 +1122,9 @@ namespace SalsaNOW
 
             [JsonProperty("steamSilentLaunch")]
             public bool? SteamSilentLaunch { get; set; }
+
+            [JsonProperty("steamInput")]
+            public bool? SteamInput { get; set; }
 
             [JsonProperty("bingWallpaper")]
             public bool? BingWallpaper { get; set; }

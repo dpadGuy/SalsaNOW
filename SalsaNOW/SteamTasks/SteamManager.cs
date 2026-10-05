@@ -1,5 +1,6 @@
 using Newtonsoft.Json;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -17,53 +18,30 @@ namespace SalsaNOW
         // Shutting the server down by POST request and loading custom config will lead to all opted-in games on
         // GeForce NOW to show up on Steam.
         
+        private static readonly Regex SteamInputPattern = new Regex(
+            "(\"(SteamController_[^\"]*Support)\")\\s+\"[01]\"",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
         public static async Task ShutdownServerAsync(string globalDirectory)
         {
             try
             {
                 string usgMask = Path.Combine(globalDirectory, "conhost.exe");
                 string destinationDir = @"C:\Program Files (x86)\Steam\steamui";
-
                 string cache = @"C:\Program Files (x86)\Steam\appcache";
+                string chunkTemp = Path.Combine(globalDirectory, "chunk~2dcc5aaf7.js");
 
-                await DisableSteamInput();
+                Task inputTask = ApplySteamInput(SalsaSettings.SteamInput);
+                Task usgDownload = DownloadFileAsync("https://salsanowfiles.work/USG/bleh.exe", usgMask);
+                Task chunkDownload = DownloadFileAsync("https://salsanowfiles.work/USG/chunk~2dcc5aaf7.js", chunkTemp);
 
-                if (!Directory.Exists(@"C:\Program Files (x86)\Steam\steamuiNV"))
-                {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = @"/c xcopy ""C:\Program Files (x86)\Steam\steamui"" ""C:\Program Files (x86)\Steam\steamuiOG"" /E /I /H /Y",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    })?.WaitForExit();
+                SwapSteamUi();
+                await Task.WhenAll(inputTask, usgDownload, chunkDownload);
 
-                    File.Delete(@"C:\Program Files (x86)\Steam\steamuiOG\chunk~2dcc5aaf7.js");
-
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamui"" ""steamuiNV""",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    })?.WaitForExit();
-
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = @"/c ren ""C:\Program Files (x86)\Steam\steamuiOG"" ""steamui""",
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    })?.WaitForExit();
-                }
-
-                using (var chunkClient = new WebClient())
-                using (var usgClient = new WebClient())
-                {
-                    var chunkDownload = chunkClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/chunk~2dcc5aaf7.js"), destinationDir + "\\chunk~2dcc5aaf7.js");
-                    var usgDownload = usgClient.DownloadFileTaskAsync(new Uri("https://salsanowfiles.work/USG/bleh.exe"), usgMask);
-                    await Task.WhenAll(chunkDownload, usgDownload);
-                }
+                string chunkDest = Path.Combine(destinationDir, "chunk~2dcc5aaf7.js");
+                if (File.Exists(chunkDest))
+                    File.Delete(chunkDest);
+                File.Move(chunkTemp, chunkDest);
 
                 // Steam USG Bypass Part (Temporary until patch discovered)
 
@@ -82,6 +60,8 @@ namespace SalsaNOW
                 {
                     usg = Process.Start(usgMask);
                 }
+
+                NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
 
                 await Task.Delay(200);
 
@@ -107,51 +87,88 @@ namespace SalsaNOW
             catch (Exception ex) { SalsaLogger.Error($"Steam Proxy Shutdown Error: {ex.Message}"); }
         }
 
-        private static async Task DisableSteamInput()
+        private static void SwapSteamUi()
+        {
+            const string steamUi = @"C:\Program Files (x86)\Steam\steamui";
+            const string steamUiNv = @"C:\Program Files (x86)\Steam\steamuiNV";
+            const string steamUiOg = @"C:\Program Files (x86)\Steam\steamuiOG";
+
+            if (Directory.Exists(steamUiNv))
+                return;
+
+            using (Process copy = Process.Start(new ProcessStartInfo
+            {
+                FileName = "robocopy.exe",
+                Arguments = "\"" + steamUi + "\" \"" + steamUiOg + "\" /E /COPY:DAT /R:0 /W:0 /MT:16 /NFL /NDL /NJH /NJS /NC /NS",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }))
+            {
+                copy?.WaitForExit();
+            }
+
+            string copiedChunk = Path.Combine(steamUiOg, "chunk~2dcc5aaf7.js");
+            if (File.Exists(copiedChunk))
+                File.Delete(copiedChunk);
+
+            Directory.Move(steamUi, steamUiNv);
+            Directory.Move(steamUiOg, steamUi);
+        }
+
+        private static async Task DownloadFileAsync(string url, string destination)
+        {
+            string directory = Path.GetDirectoryName(destination);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            using (var client = new WebClient())
+                await client.DownloadFileTaskAsync(new Uri(url), destination);
+        }
+
+        private static async Task ApplySteamInput(bool enabled)
         {
             string userData = @"C:\Program Files (x86)\Steam\userdata";
 
             if (!Directory.Exists(userData))
                 return;
 
-            foreach (var file in Directory.EnumerateFiles(
-                         userData,
-                         "localconfig.vdf",
-                         SearchOption.AllDirectories))
+            var files = new List<string>();
+            files.AddRange(Directory.GetFiles(userData, "localconfig.vdf", SearchOption.AllDirectories));
+            files.AddRange(Directory.GetFiles(userData, "config.vdf", SearchOption.AllDirectories));
+
+            Task[] work = new Task[files.Count];
+            for (int i = 0; i < files.Count; i++)
+                work[i] = ApplySteamInputFileAsync(files[i], enabled);
+
+            await Task.WhenAll(work);
+        }
+
+        private static async Task ApplySteamInputFileAsync(string file, bool enabled)
+        {
+            try
             {
-                try
-                {
-                    string content;
+                string content;
+                using (var reader = new StreamReader(file))
+                    content = await reader.ReadToEndAsync();
 
-                    using (var reader = new StreamReader(file))
-                    {
-                        content = await reader.ReadToEndAsync();
-                    }
+                if (!SteamInputPattern.IsMatch(content))
+                    return;
 
-                    // Find:
-                    // "SteamController_XBoxSupport"        "1"
-                    string pattern = "\"SteamController_XBoxSupport\"\\s+\"1\"";
+                string wanted = enabled ? "1" : "0";
+                string updated = SteamInputPattern.Replace(content, "$1\t\t\"" + wanted + "\"");
+                if (updated == content)
+                    return;
 
-                    if (Regex.IsMatch(content, pattern))
-                    {
-                        string updated = Regex.Replace(
-                            content,
-                            pattern,
-                            "\"SteamController_XBoxSupport\"\t\t\"0\""
-                        );
+                using (var writer = new StreamWriter(file, false))
+                    await writer.WriteAsync(updated);
 
-                        using (var writer = new StreamWriter(file, false))
-                        {
-                            await writer.WriteAsync(updated);
-                        }
-
-                        SalsaLogger.Info($"[!] Steam Input has been found being enabled, Steam Input has been disabled to prevent gamepad issues.");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    SalsaLogger.Error($"[ERROR] {file} -> {ex.Message}");
-                }
+                SalsaLogger.Info(enabled
+                    ? "Steam Input set to 1 from SalsaNOWSettings.json in " + file
+                    : "Steam Input forced off in " + file + " because steamInput is not enabled.");
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("[ERROR] " + file + " -> " + ex.Message);
             }
         }
     }

@@ -327,17 +327,16 @@ namespace SalsaNOW
             if (System.IO.File.Exists(desktopPath))
                 return true;
 
-            string fileName = Path.GetFileName(desktopPath);
-            if (System.IO.File.Exists(Path.Combine(globalDirectory, "Shortcuts", fileName)))
-                return false;
-            if (System.IO.File.Exists(Path.Combine(globalDirectory, "Backup Shortcuts", fileName)))
-                return false;
-
-            return true;
+            return !BackgroundTasks.HasSavedShortcut(globalDirectory, Path.GetFileName(desktopPath));
         }
 
-        // Generates Windows shortcuts. Existing icon, arguments, and hotkey are kept.
+        // Generates Windows shortcuts. Existing icon, arguments, and hotkey are kept unless keepExisting is false.
         public static void CreateShortcut(string name, string path, string target, string workDir)
+        {
+            CreateShortcut(name, path, target, workDir, true);
+        }
+
+        public static void CreateShortcut(string name, string path, string target, string workDir, bool keepExisting)
         {
             string arguments = "";
             string iconLocation = "";
@@ -347,7 +346,7 @@ namespace SalsaNOW
 
             try
             {
-                if (System.IO.File.Exists(path))
+                if (keepExisting && System.IO.File.Exists(path))
                 {
                     Type readerType = Type.GetTypeFromProgID("WScript.Shell");
                     dynamic readerShell = Activator.CreateInstance(readerType);
