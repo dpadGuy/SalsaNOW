@@ -8,6 +8,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace SalsaNOW
@@ -83,14 +84,7 @@ namespace SalsaNOW
             }
 
             if (wallpaper != null)
-            {
-                NativeMethods.SystemParametersInfo(
-                    SPI_SETDESKWALLPAPER,
-                    0,
-                    wallpaper,
-                    SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
-                );
-            }
+                ApplyWallpaper(wallpaper);
 
             // 3. Fetch and install desktop from remote JSON
             try
@@ -161,10 +155,86 @@ namespace SalsaNOW
 
                 if (SalsaSettings.BingWallpaperEnabled)
                 {
-                    await DownloadBingWallpaper(userWallpaperDir);
+                    string bingWallpaper = await DownloadBingWallpaper(userWallpaperDir);
+                    if (bingWallpaper != null)
+                        wallpaper = bingWallpaper;
                 }
             }
             catch (Exception ex) { SalsaLogger.Error(ex.ToString()); }
+
+            if (wallpaper != null)
+                await ApplyWallpaperWhenDesktopReady(wallpaper);
+        }
+
+        private static void ApplyWallpaper(string path)
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop", true))
+                {
+                    key?.SetValue("Wallpaper", path);
+                    key?.SetValue("WallpaperStyle", "10");
+                    key?.SetValue("TileWallpaper", "0");
+                }
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("Failed to set wallpaper registry: " + ex.Message);
+            }
+
+            bool applied = NativeMethods.SystemParametersInfo(
+                SPI_SETDESKWALLPAPER,
+                0,
+                path,
+                SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+
+            if (!applied)
+            {
+                try
+                {
+                    var desktop = (IDesktopWallpaper)new DesktopWallpaper();
+                    desktop.SetWallpaper(null, path);
+                    applied = true;
+                }
+                catch
+                {
+                }
+            }
+
+            if (applied)
+                SalsaLogger.Info("Wallpaper applied: " + path);
+            else
+                SalsaLogger.Error("Wallpaper was not applied: " + path);
+        }
+
+        private static async Task ApplyWallpaperWhenDesktopReady(string path)
+        {
+            DateTime deadline = DateTime.UtcNow.AddSeconds(20);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (NativeMethods.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero
+                    && NativeMethods.FindWindow("Progman", null) != IntPtr.Zero)
+                {
+                    await Task.Delay(1000);
+                    ApplyWallpaper(path);
+                    return;
+                }
+
+                await Task.Delay(250);
+            }
+
+            ApplyWallpaper(path);
+        }
+
+        [ComImport, Guid("C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD")]
+        private class DesktopWallpaper
+        {
+        }
+
+        [ComImport, Guid("B92B56A9-8B55-4E14-9A89-0199BBB6F93B"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IDesktopWallpaper
+        {
+            void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper);
         }
 
         private static void SafeDeleteDirectory(string path, int retries = 3)
@@ -185,8 +255,8 @@ namespace SalsaNOW
             }
         }
 
-        // Fetches and applies the UHD Bing Photo of the Day
-        private static async Task DownloadBingWallpaper(string dir)
+        // Fetches the UHD Bing Photo of the Day. The caller applies it after the desktop is ready.
+        private static async Task<string> DownloadBingWallpaper(string dir)
         {
             try
             {
@@ -197,18 +267,15 @@ namespace SalsaNOW
                         market = "en-US";
                     string json = await wc.DownloadStringTaskAsync("https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=" + market);
                     var url = JObject.Parse(json)["images"][0]["urlbase"].ToString();
-                    await wc.DownloadFileTaskAsync(new Uri($"https://www.bing.com{url}_UHD.jpg"), Path.Combine(dir, "wallpaper.jpg"));
-
-                    // Apply bing wallpaper as the desktop background at users request from config file
-                    bool success = NativeMethods.SystemParametersInfo(
-                        SPI_SETDESKWALLPAPER,
-                        0,
-                        Path.Combine(dir, "wallpaper.jpg"),
-                        SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
-                    );
+                    string path = Path.Combine(dir, "wallpaper.jpg");
+                    await wc.DownloadFileTaskAsync(new Uri("https://www.bing.com" + url + "_UHD.jpg"), path);
+                    return path;
                 }
             }
-            catch { }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

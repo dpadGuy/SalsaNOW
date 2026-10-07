@@ -63,7 +63,8 @@ namespace SalsaNOW
             catch (TaskCanceledException) { }
         }
         
-        // Monitors Desktop and Start Menu shortcuts, syncing them to the persistent SalsaNOW directory
+        // Saves a desktop shortcut into Shortcuts only when its contents changed.
+        // test.lnk is stored as test.lnk.bak, and test.url as test.url.bak.
         public static async Task StartShortcutsSavingAsync(string globalDirectory, CancellationToken token)
         {
             string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
@@ -73,105 +74,376 @@ namespace SalsaNOW
 
             Directory.CreateDirectory(shortcutsDir);
             Directory.CreateDirectory(backupDir);
+            Directory.CreateDirectory(startMenuPath);
 
-            // 1. Initial Sync: Throw the newest saved shortcut for each name onto the Desktop
             try
             {
-                foreach (KeyValuePair<string, string> shortcut in GetNewestShortcutPerName(shortcutsDir))
-                    CopyShortcut(shortcut.Value, Path.Combine(desktopPath, shortcut.Key));
-
+                RenameSavedShortcutsToBak(shortcutsDir);
+                RenameSavedShortcutsToBak(backupDir);
+                RestoreBakShortcuts(shortcutsDir, desktopPath);
+                NormalizeDesktopShortcuts(desktopPath);
                 SalsaLogger.Info("Initial Desktop shortcut sync completed.");
             }
             catch (Exception ex) { SalsaLogger.Error($"Initial shortcut sync failed: {ex.Message}"); }
 
             try
             {
+                bool steamWasRunning = false;
                 while (!token.IsCancellationRequested)
                 {
-                    await Task.Delay(5000, token);
+                    await Task.Delay(1000, token);
 
-                    // Sync Desktop to Shortcuts, overwriting saved copies
+                    bool steamRunning = IsSteamRunning();
+                    if (!steamRunning)
+                    {
+                        if (steamWasRunning)
+                            SalsaLogger.Info("Steam is not running. Shortcut sync paused.");
+                        steamWasRunning = false;
+                        continue;
+                    }
+
+                    if (!steamWasRunning)
+                        SalsaLogger.Info("Steam is running. Shortcut sync continued.");
+                    steamWasRunning = true;
+
                     try
                     {
-                        if (Directory.Exists(desktopPath))
-                        {
-                            foreach (string glob in ShortcutGlobs)
-                            {
-                                foreach (string file in Directory.GetFiles(desktopPath, glob, SearchOption.TopDirectoryOnly))
-                                    CopyShortcut(file, Path.Combine(shortcutsDir, Path.GetFileName(file)));
-                            }
-                        }
+                        NormalizeDesktopShortcuts(desktopPath);
+                        SyncModifiedShortcuts(desktopPath, startMenuPath, shortcutsDir, backupDir);
                     }
-                    catch { }
-
-                    // Sync Shortcuts To Start Menu from the newest saved copy of each shortcut
-                    try
+                    catch (Exception ex)
                     {
-                        foreach (KeyValuePair<string, string> shortcut in GetNewestShortcutPerName(shortcutsDir))
-                            CopyShortcut(shortcut.Value, Path.Combine(startMenuPath, shortcut.Key));
+                        SalsaLogger.Error("Shortcut sync failed: " + ex.Message);
                     }
-                    catch { }
-
-                    // 5. Cleanup: Move deleted shortcuts from the primary folder to the long-term backup
-                    try
-                    {
-                        foreach (var backupFile in GetShortcutFiles(shortcutsDir))
-                        {
-                            string fileName = Path.GetFileName(backupFile);
-                            string originalPath = Path.Combine(desktopPath, fileName);
-
-                            if (!File.Exists(originalPath))
-                            {
-                                if (File.Exists(Path.Combine(backupDir, fileName)))
-                                {
-                                    File.Delete(backupFile);
-                                }
-                                else
-                                {
-                                    File.Move(backupFile, Path.Combine(backupDir, fileName));
-                                    SalsaLogger.Info($"Moved deleted shortcut to long-term backup: {fileName}");
-                                }
-                            }
-                        }
-                    }
-                    catch { }
                 }
             }
             catch (TaskCanceledException) { }
         }
 
-        private static readonly string[] ShortcutGlobs = { "*.lnk", "*.url" };
+        private static bool IsSteamRunning()
+        {
+            Process[] processes = Process.GetProcesses();
+            try
+            {
+                foreach (Process process in processes)
+                {
+                    try
+                    {
+                        if (process.ProcessName.StartsWith("steam", StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                    catch
+                    {
+                    }
+                }
 
-        private static IEnumerable<string> GetShortcutFiles(string directory)
+                return false;
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
+        }
+
+        public static bool HasSavedShortcut(string globalDirectory, string fileName)
+        {
+            if (string.IsNullOrEmpty(globalDirectory) || string.IsNullOrEmpty(fileName))
+                return false;
+
+            string bakName = fileName + ".bak";
+            if (File.Exists(Path.Combine(globalDirectory, "Shortcuts", fileName)))
+                return true;
+            if (File.Exists(Path.Combine(globalDirectory, "Shortcuts", bakName)))
+                return true;
+            if (File.Exists(Path.Combine(globalDirectory, "Backup Shortcuts", fileName)))
+                return true;
+            if (File.Exists(Path.Combine(globalDirectory, "Backup Shortcuts", bakName)))
+                return true;
+
+            return false;
+        }
+
+        public static void ClearSavedShortcut(string globalDirectory, string fileName)
+        {
+            if (string.IsNullOrEmpty(globalDirectory) || string.IsNullOrEmpty(fileName))
+                return;
+
+            string bakName = fileName + ".bak";
+            TryDeleteFile(Path.Combine(globalDirectory, "Shortcuts", fileName));
+            TryDeleteFile(Path.Combine(globalDirectory, "Shortcuts", bakName));
+            TryDeleteFile(Path.Combine(globalDirectory, "Backup Shortcuts", fileName));
+            TryDeleteFile(Path.Combine(globalDirectory, "Backup Shortcuts", bakName));
+        }
+
+        public static void RememberDesktopShortcut(string globalDirectory, string desktopPath)
+        {
+            if (string.IsNullOrEmpty(globalDirectory) || string.IsNullOrEmpty(desktopPath) || !File.Exists(desktopPath))
+                return;
+
+            string fileName = Path.GetFileName(desktopPath);
+            ClearSavedShortcut(globalDirectory, fileName);
+
+            string shortcutsDir = Path.Combine(globalDirectory, "Shortcuts");
+            Directory.CreateDirectory(shortcutsDir);
+            File.Copy(desktopPath, Path.Combine(shortcutsDir, fileName + ".bak"), true);
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return;
+
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+            }
+            catch
+            {
+            }
+        }
+
+        private static readonly string[] ShortcutGlobs = { "*.lnk", "*.url" };
+        private static readonly byte[] ShortcutClsid =
+        {
+            0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46
+        };
+
+        private static void RenameSavedShortcutsToBak(string directory)
         {
             if (!Directory.Exists(directory))
-                yield break;
+                return;
 
             foreach (string glob in ShortcutGlobs)
             {
-                foreach (string file in Directory.GetFiles(directory, glob, SearchOption.AllDirectories))
-                    yield return file;
+                foreach (string file in Directory.GetFiles(directory, glob, SearchOption.TopDirectoryOnly))
+                {
+                    if (file.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    string bak = file + ".bak";
+                    if (File.Exists(bak))
+                        continue;
+
+                    File.Move(file, bak);
+                }
             }
         }
 
-        private static Dictionary<string, string> GetNewestShortcutPerName(string directory)
+        private static void RestoreBakShortcuts(string shortcutsDir, string desktopPath)
         {
-            var newest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string file in GetShortcutFiles(directory))
+            foreach (string bak in Directory.GetFiles(shortcutsDir, "*.bak", SearchOption.TopDirectoryOnly))
             {
-                string name = Path.GetFileName(file);
-                string existing;
-                if (!newest.TryGetValue(name, out existing)
-                    || File.GetLastWriteTimeUtc(file) >= File.GetLastWriteTimeUtc(existing))
+                string name = ShortcutNameFromBak(bak);
+                if (name == null)
+                    continue;
+
+                byte[] bytes = ReadShortcutBytes(bak);
+                if (bytes == null)
+                    continue;
+
+                PlaceLiveShortcut(desktopPath, name, bytes);
+            }
+        }
+
+        private static void NormalizeDesktopShortcuts(string desktopPath)
+        {
+            if (!Directory.Exists(desktopPath))
+                return;
+
+            foreach (string file in Directory.GetFiles(desktopPath))
+            {
+                string liveName = ShortcutNameFromBak(file);
+                if (liveName == null)
+                    continue;
+
+                byte[] bytes = ReadShortcutBytes(file);
+                if (bytes != null)
+                    PlaceLiveShortcut(desktopPath, liveName, bytes);
+
+                try
                 {
-                    newest[name] = file;
+                    File.SetAttributes(file, FileAttributes.Normal);
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    SalsaLogger.Error("Shortcut copy failed for " + Path.GetFileName(file) + ": " + ex.Message);
+                }
+            }
+        }
+
+        private static void PlaceLiveShortcut(string folder, string liveName, byte[] bytes)
+        {
+            if (string.IsNullOrEmpty(liveName) || bytes == null)
+                return;
+
+            if (liveName.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                liveName = ShortcutNameFromBak(liveName);
+            if (liveName == null)
+                return;
+
+            string dest = Path.Combine(folder, liveName);
+            if (SameShortcutFile(dest, bytes))
+                return;
+
+            WriteShortcutFile(dest, bytes);
+        }
+
+        private static void SyncModifiedShortcuts(string desktopPath, string startMenuPath, string shortcutsDir, string backupDir)
+        {
+            var onDesktop = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (Directory.Exists(desktopPath))
+            {
+                foreach (string glob in ShortcutGlobs)
+                {
+                    foreach (string file in Directory.GetFiles(desktopPath, glob, SearchOption.TopDirectoryOnly))
+                    {
+                        string name = Path.GetFileName(file);
+                        if (name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        onDesktop.Add(name);
+                        string bak = Path.Combine(shortcutsDir, name + ".bak");
+                        byte[] bytes = ReadShortcutBytes(file);
+                        if (bytes == null)
+                        {
+                            byte[] saved = ReadShortcutBytes(bak);
+                            if (saved != null)
+                            {
+                                PlaceLiveShortcut(desktopPath, name, saved);
+                                SalsaLogger.Info("Restored shortcut: " + name);
+                            }
+                            continue;
+                        }
+
+                        if (!SameShortcutFile(bak, bytes))
+                        {
+                            WriteShortcutFile(bak, bytes);
+                            SalsaLogger.Info("Saved modified shortcut: " + name + ".bak");
+                        }
+
+                        string startMenu = Path.Combine(startMenuPath, name);
+                        if (!SameShortcutFile(startMenu, bytes))
+                            WriteShortcutFile(startMenu, bytes);
+
+                        string backupBak = Path.Combine(backupDir, name + ".bak");
+                        if (File.Exists(backupBak))
+                        {
+                            File.SetAttributes(backupBak, FileAttributes.Normal);
+                            File.Delete(backupBak);
+                        }
+                    }
                 }
             }
 
-            return newest;
+            if (!Directory.Exists(desktopPath))
+                return;
+
+            foreach (string bak in Directory.GetFiles(shortcutsDir, "*.bak", SearchOption.TopDirectoryOnly))
+            {
+                string name = ShortcutNameFromBak(bak);
+                if (name == null || onDesktop.Contains(name))
+                    continue;
+
+                string backupBak = Path.Combine(backupDir, name + ".bak");
+                File.SetAttributes(bak, FileAttributes.Normal);
+                if (File.Exists(backupBak))
+                {
+                    File.Delete(bak);
+                }
+                else
+                {
+                    File.Move(bak, backupBak);
+                    SalsaLogger.Info("Moved deleted shortcut to long-term backup: " + name + ".bak");
+                }
+            }
         }
 
-        private static void CopyShortcut(string source, string dest)
+        private static string ShortcutNameFromBak(string bakPath)
+        {
+            string name = Path.GetFileName(bakPath);
+            if (name.Length <= 4 || !name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            string shortcut = name.Substring(0, name.Length - 4);
+            if (shortcut.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
+                || shortcut.EndsWith(".url", StringComparison.OrdinalIgnoreCase))
+                return shortcut;
+
+            return null;
+        }
+
+        private static byte[] ReadShortcutBytes(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return null;
+
+                byte[] bytes = File.ReadAllBytes(path);
+                if (!IsShortcutBytesValid(path, bytes))
+                    return null;
+                return bytes;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsShortcutBytesValid(string name, byte[] bytes)
+        {
+            if (bytes == null || bytes.Length < 20)
+                return false;
+
+            if (name.EndsWith(".url", StringComparison.OrdinalIgnoreCase)
+                || name.EndsWith(".url.bak", StringComparison.OrdinalIgnoreCase))
+            {
+                string text = System.Text.Encoding.ASCII.GetString(bytes);
+                return text.IndexOf("URL=", StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            if (!name.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
+                && !name.EndsWith(".lnk.bak", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (BitConverter.ToUInt32(bytes, 0) != 0x4C)
+                return false;
+
+            for (int i = 0; i < ShortcutClsid.Length; i++)
+            {
+                if (bytes[4 + i] != ShortcutClsid[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool SameShortcutFile(string path, byte[] bytes)
+        {
+            byte[] existing = ReadShortcutBytes(path);
+            return existing != null && BytesEqual(existing, bytes);
+        }
+
+        private static bool BytesEqual(byte[] left, byte[] right)
+        {
+            if (left == null || right == null || left.Length != right.Length)
+                return false;
+
+            for (int i = 0; i < left.Length; i++)
+            {
+                if (left[i] != right[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static void WriteShortcutFile(string dest, byte[] bytes)
         {
             try
             {
@@ -179,15 +451,22 @@ namespace SalsaNOW
                 if (!string.IsNullOrEmpty(destDirectory))
                     Directory.CreateDirectory(destDirectory);
 
-                if (File.Exists(dest))
-                    File.SetAttributes(dest, FileAttributes.Normal);
+                string temp = dest + ".tmp";
+                File.WriteAllBytes(temp, bytes);
 
-                File.Copy(source, dest, true);
-                File.SetLastWriteTimeUtc(dest, DateTime.UtcNow);
+                if (File.Exists(dest))
+                {
+                    File.SetAttributes(dest, FileAttributes.Normal);
+                    File.Replace(temp, dest, null);
+                }
+                else
+                {
+                    File.Move(temp, dest);
+                }
             }
             catch (Exception ex)
             {
-                SalsaLogger.Error("Shortcut copy failed for " + Path.GetFileName(source) + ": " + ex.Message);
+                SalsaLogger.Error("Shortcut copy failed for " + Path.GetFileName(dest) + ": " + ex.Message);
             }
         }
 
