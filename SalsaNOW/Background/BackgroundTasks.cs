@@ -88,23 +88,9 @@ namespace SalsaNOW
 
             try
             {
-                bool steamWasRunning = false;
                 while (!token.IsCancellationRequested)
                 {
                     await Task.Delay(1000, token);
-
-                    bool steamRunning = IsSteamRunning();
-                    if (!steamRunning)
-                    {
-                        if (steamWasRunning)
-                            SalsaLogger.Info("Steam is not running. Shortcut sync paused.");
-                        steamWasRunning = false;
-                        continue;
-                    }
-
-                    if (!steamWasRunning)
-                        SalsaLogger.Info("Steam is running. Shortcut sync continued.");
-                    steamWasRunning = true;
 
                     try
                     {
@@ -118,32 +104,6 @@ namespace SalsaNOW
                 }
             }
             catch (TaskCanceledException) { }
-        }
-
-        private static bool IsSteamRunning()
-        {
-            Process[] processes = Process.GetProcesses();
-            try
-            {
-                foreach (Process process in processes)
-                {
-                    try
-                    {
-                        if (process.ProcessName.StartsWith("steam", StringComparison.OrdinalIgnoreCase))
-                            return true;
-                    }
-                    catch
-                    {
-                    }
-                }
-
-                return false;
-            }
-            finally
-            {
-                foreach (Process process in processes)
-                    process.Dispose();
-            }
         }
 
         public static bool HasSavedShortcut(string globalDirectory, string fileName)

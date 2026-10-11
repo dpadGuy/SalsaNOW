@@ -143,13 +143,8 @@ namespace SalsaNOW
 
                         SalsaLogger.Info("Starting desktop app: " + exePath);
                         FinalBackgroundTasks.EnableClassicContextMenu();
-
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = exePath,
-                            WorkingDirectory = appDir,
-                            UseShellExecute = false
-                        });
+                        StartDesktopProcess(exePath, appDir);
+                        _ = EnsureDesktopAvailableAsync(exePath, appDir);
                     }
                 }
 
@@ -165,6 +160,86 @@ namespace SalsaNOW
             if (wallpaper != null)
                 await ApplyWallpaperWhenDesktopReady(wallpaper);
         }
+
+        private static void StartDesktopProcess(string exePath, string workingDirectory)
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = exePath,
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = false
+            });
+        }
+
+        private static async Task EnsureDesktopAvailableAsync(string exePath, string workingDirectory)
+        {
+            bool announced = false;
+            while (true)
+            {
+                await Task.Delay(5000);
+
+                try
+                {
+                    if (IsDesktopAvailable())
+                    {
+                        if (!announced)
+                        {
+                            SalsaLogger.Info("Desktop is available.");
+                            announced = true;
+                        }
+
+                        continue;
+                    }
+
+                    announced = false;
+                    SalsaLogger.Warn("Desktop is not available. Starting " + exePath);
+                    StartDesktopProcess(exePath, workingDirectory);
+                }
+                catch (Exception ex)
+                {
+                    SalsaLogger.Error("Desktop start failed: " + ex.Message);
+                }
+            }
+        }
+
+        private static bool IsDesktopAvailable()
+        {
+            var explorerIds = new HashSet<uint>();
+            foreach (Process process in Process.GetProcessesByName("explorer"))
+            {
+                try
+                {
+                    if (!process.HasExited)
+                        explorerIds.Add((uint)process.Id);
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+
+            if (explorerIds.Count == 0)
+                return false;
+
+            return IsExplorerWindow("Progman", explorerIds) && IsExplorerWindow("Shell_TrayWnd", explorerIds);
+        }
+
+        private static bool IsExplorerWindow(string className, HashSet<uint> explorerIds)
+        {
+            IntPtr window = NativeMethods.FindWindow(className, null);
+            if (window == IntPtr.Zero || !IsWindowVisible(window))
+                return false;
+
+            uint processId;
+            NativeMethods.GetWindowThreadProcessId(window, out processId);
+            return explorerIds.Contains(processId);
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
 
         private static void ApplyWallpaper(string path)
         {
