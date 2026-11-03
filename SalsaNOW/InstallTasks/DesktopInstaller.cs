@@ -54,12 +54,7 @@ namespace SalsaNOW
             Directory.CreateDirectory(userWallpaperDir);
             Directory.CreateDirectory(defaultWallpaperDir);
 
-            string wallpaper = Directory
-                .EnumerateFiles(userWallpaperDir)
-                .FirstOrDefault(f =>
-                    SupportedExtensions.Contains(
-                        Path.GetExtension(f),
-                        StringComparer.OrdinalIgnoreCase));
+            string wallpaper = FindUserWallpaper(userWallpaperDir);
 
             if (wallpaper == null)
             {
@@ -68,7 +63,8 @@ namespace SalsaNOW
                 {
                     using (var webClient = new WebClient())
                     {
-                        await webClient.DownloadFileTaskAsync(
+                        await DownloadWallpaperFile(
+                            webClient,
                             new Uri("https://salsanowfiles.work/ExplorerContents/Wallpaper/WallpaperWin11.jpg"),
                             defaultWallpaper);
                     }
@@ -158,7 +154,7 @@ namespace SalsaNOW
             catch (Exception ex) { SalsaLogger.Error(ex.ToString()); }
 
             if (wallpaper != null)
-                await ApplyWallpaperWhenDesktopReady(wallpaper);
+                _ = KeepWallpaperAppliedAsync(userWallpaperDir, wallpaper);
         }
 
         private static void StartDesktopProcess(string exePath, string workingDirectory)
@@ -241,8 +237,27 @@ namespace SalsaNOW
         [DllImport("user32.dll")]
         private static extern bool IsWindowVisible(IntPtr hWnd);
 
+        // Newest first, so a wallpaper chosen later wins over an older one left in the folder.
+        private static string FindUserWallpaper(string dir)
+        {
+            return new DirectoryInfo(dir)
+                .EnumerateFiles()
+                .Where(f =>
+                    f.Length > 0
+                    && SupportedExtensions.Contains(f.Extension, StringComparer.OrdinalIgnoreCase))
+                .OrderByDescending(f => f.CreationTimeUtc > f.LastWriteTimeUtc ? f.CreationTimeUtc : f.LastWriteTimeUtc)
+                .Select(f => f.FullName)
+                .FirstOrDefault();
+        }
+
         private static void ApplyWallpaper(string path)
         {
+            if (!File.Exists(path))
+            {
+                SalsaLogger.Error("Wallpaper file is missing: " + path);
+                return;
+            }
+
             try
             {
                 using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop", true))
@@ -264,17 +279,7 @@ namespace SalsaNOW
                 SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
 
             if (!applied)
-            {
-                try
-                {
-                    var desktop = (IDesktopWallpaper)new DesktopWallpaper();
-                    desktop.SetWallpaper(null, path);
-                    applied = true;
-                }
-                catch
-                {
-                }
-            }
+                applied = SetShellWallpaper(path);
 
             if (applied)
                 SalsaLogger.Info("Wallpaper applied: " + path);
@@ -282,23 +287,86 @@ namespace SalsaNOW
                 SalsaLogger.Error("Wallpaper was not applied: " + path);
         }
 
-        private static async Task ApplyWallpaperWhenDesktopReady(string path)
+        private static bool SetShellWallpaper(string path)
         {
-            DateTime deadline = DateTime.UtcNow.AddSeconds(20);
-            while (DateTime.UtcNow < deadline)
+            try
             {
-                if (NativeMethods.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero
-                    && NativeMethods.FindWindow("Progman", null) != IntPtr.Zero)
-                {
-                    await Task.Delay(1000);
-                    ApplyWallpaper(path);
-                    return;
-                }
-
-                await Task.Delay(250);
+                var desktop = (IDesktopWallpaper)new DesktopWallpaper();
+                desktop.SetWallpaper(null, path);
+                return true;
             }
+            catch (Exception ex)
+            {
+                SalsaLogger.Warn("Shell wallpaper call failed: " + ex.Message);
+                return false;
+            }
+        }
 
-            ApplyWallpaper(path);
+        private static bool IsShellWallpaperSet(string path)
+        {
+            try
+            {
+                var desktop = (IDesktopWallpaper)new DesktopWallpaper();
+                return string.Equals(desktop.GetWallpaper(null), path, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        // SystemParametersInfo reports success even with no shell running, and Explorer can start
+        // late or be restarted, so apply once per Explorer instance and confirm the shell took it.
+        private static async Task KeepWallpaperAppliedAsync(string userWallpaperDir, string fallbackWallpaper)
+        {
+            uint appliedShellId = 0;
+            while (true)
+            {
+                await Task.Delay(1000);
+
+                try
+                {
+                    uint shellId = GetDesktopShellId();
+                    if (shellId == 0 || shellId == appliedShellId)
+                        continue;
+
+                    await Task.Delay(1000);
+
+                    string path = FindUserWallpaper(userWallpaperDir) ?? fallbackWallpaper;
+                    ApplyWallpaper(path);
+
+                    bool confirmed = false;
+                    for (int attempt = 0; attempt < 5 && !confirmed; attempt++)
+                    {
+                        await Task.Delay(2000);
+
+                        confirmed = IsShellWallpaperSet(path);
+                        if (!confirmed)
+                            SetShellWallpaper(path);
+                    }
+
+                    if (confirmed)
+                        SalsaLogger.Info("Wallpaper confirmed by the shell: " + path);
+                    else
+                        SalsaLogger.Error("Wallpaper could not be confirmed: " + path);
+
+                    appliedShellId = shellId;
+                }
+                catch (Exception ex)
+                {
+                    SalsaLogger.Error("Wallpaper watcher failed: " + ex.Message);
+                }
+            }
+        }
+
+        private static uint GetDesktopShellId()
+        {
+            if (!IsDesktopAvailable())
+                return 0;
+
+            uint processId;
+            NativeMethods.GetWindowThreadProcessId(NativeMethods.FindWindow("Progman", null), out processId);
+            return processId;
         }
 
         [ComImport, Guid("C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD")]
@@ -310,6 +378,9 @@ namespace SalsaNOW
         private interface IDesktopWallpaper
         {
             void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper);
+
+            [return: MarshalAs(UnmanagedType.LPWStr)]
+            string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID);
         }
 
         private static void SafeDeleteDirectory(string path, int retries = 3)
@@ -343,13 +414,28 @@ namespace SalsaNOW
                     string json = await wc.DownloadStringTaskAsync("https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=" + market);
                     var url = JObject.Parse(json)["images"][0]["urlbase"].ToString();
                     string path = Path.Combine(dir, "wallpaper.jpg");
-                    await wc.DownloadFileTaskAsync(new Uri("https://www.bing.com" + url + "_UHD.jpg"), path);
+                    await DownloadWallpaperFile(wc, new Uri("https://www.bing.com" + url + "_UHD.jpg"), path);
                     return path;
                 }
             }
             catch
             {
                 return null;
+            }
+        }
+
+        // Downloads to a temp file first so a failed download can't replace a good wallpaper.
+        private static async Task DownloadWallpaperFile(WebClient wc, Uri uri, string path)
+        {
+            string tempPath = path + ".tmp";
+            try
+            {
+                await wc.DownloadFileTaskAsync(uri, tempPath);
+                File.Copy(tempPath, path, true);
+            }
+            finally
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
             }
         }
     }
