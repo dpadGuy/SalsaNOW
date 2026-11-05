@@ -25,6 +25,9 @@ namespace SalsaNOW
         public static void Warn(string message) => Write("[!]", message, ConsoleColor.Yellow);
         public static void Error(string message) => Write("[ERR]", message, ConsoleColor.Red);
 
+        // Steam-related info, shown in Steam's light blue (closest console color to #66C0F4)
+        public static void Steam(string message) => Write("[+]", message, ConsoleColor.Cyan);
+
         // Outputs formatted messages to the console and appends them to the local log file
         private static void Write(string prefix, string message, ConsoleColor color)
         {
