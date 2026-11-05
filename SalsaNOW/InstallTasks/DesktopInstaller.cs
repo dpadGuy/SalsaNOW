@@ -79,6 +79,8 @@ namespace SalsaNOW
                 wallpaper = File.Exists(defaultWallpaper) ? defaultWallpaper : null;
             }
 
+            DisableBackgroundOverrides();
+
             if (wallpaper != null)
                 ApplyWallpaper(wallpaper);
 
@@ -315,42 +317,117 @@ namespace SalsaNOW
             }
         }
 
-        // SystemParametersInfo reports success even with no shell running, and Explorer can start
-        // late or be restarted, so apply once per Explorer instance and confirm the shell took it.
+        private static string GetRegistryWallpaper()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop"))
+                    return key?.GetValue("Wallpaper") as string;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // Windows Spotlight and slideshow replace the picture on their own schedule, so force a plain picture background.
+        private static void DisableBackgroundOverrides()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers"))
+                {
+                    object current = key?.GetValue("BackgroundType");
+                    if (!(current is int type) || type != 0)
+                        key?.SetValue("BackgroundType", 0, Microsoft.Win32.RegistryValueKind.DWord);
+                }
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Warn("Failed to set background type: " + ex.Message);
+            }
+
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Policies\Microsoft\Windows\CloudContent"))
+                {
+                    key?.SetValue("DisableSpotlightCollectionOnDesktop", 1, Microsoft.Win32.RegistryValueKind.DWord);
+                    key?.SetValue("DisableWindowsSpotlightFeatures", 1, Microsoft.Win32.RegistryValueKind.DWord);
+                }
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Warn("Failed to disable Windows Spotlight: " + ex.Message);
+            }
+        }
+
+        // Explorer can start late or be restarted, and Windows (theme sync, Spotlight, session setup)
+        // can swap the wallpaper seconds after it was applied. Keep checking and put ours back whenever
+        // the shell or the registry shows anything else.
         private static async Task KeepWallpaperAppliedAsync(string userWallpaperDir, string fallbackWallpaper)
         {
             uint appliedShellId = 0;
+            string appliedPath = null;
+            DateTime appliedWriteTime = DateTime.MinValue;
+            int failedAttempts = 0;
+
             while (true)
             {
-                await Task.Delay(1000);
+                await Task.Delay(failedAttempts > 5 ? 10000 : 2000);
 
                 try
                 {
                     uint shellId = GetDesktopShellId();
-                    if (shellId == 0 || shellId == appliedShellId)
+                    if (shellId == 0)
                         continue;
 
-                    await Task.Delay(1000);
-
                     string path = FindUserWallpaper(userWallpaperDir) ?? fallbackWallpaper;
-                    ApplyWallpaper(path);
+                    if (path == null || !File.Exists(path))
+                        continue;
 
-                    bool confirmed = false;
-                    for (int attempt = 0; attempt < 5 && !confirmed; attempt++)
+                    DateTime writeTime = File.GetLastWriteTimeUtc(path);
+
+                    string reason = null;
+                    if (shellId != appliedShellId)
+                        reason = "desktop shell started";
+                    else if (!string.Equals(path, appliedPath, StringComparison.OrdinalIgnoreCase) || writeTime != appliedWriteTime)
+                        reason = "wallpaper file changed";
+                    else if (!IsShellWallpaperSet(path))
+                        reason = "shell shows a different wallpaper";
+                    else if (!string.Equals(GetRegistryWallpaper(), path, StringComparison.OrdinalIgnoreCase))
+                        reason = "registry shows a different wallpaper";
+
+                    if (reason == null)
                     {
-                        await Task.Delay(2000);
-
-                        confirmed = IsShellWallpaperSet(path);
-                        if (!confirmed)
-                            SetShellWallpaper(path);
+                        failedAttempts = 0;
+                        continue;
                     }
 
-                    if (confirmed)
+                    if (shellId != appliedShellId)
+                        await Task.Delay(1000);
+
+                    SalsaLogger.Info("Reapplying wallpaper (" + reason + "): " + path);
+                    DisableBackgroundOverrides();
+                    ApplyWallpaper(path);
+
+                    await Task.Delay(1000);
+                    if (!IsShellWallpaperSet(path))
+                        SetShellWallpaper(path);
+
+                    if (IsShellWallpaperSet(path))
+                    {
+                        failedAttempts = 0;
                         SalsaLogger.Info("Wallpaper confirmed by the shell: " + path);
+                    }
                     else
-                        SalsaLogger.Error("Wallpaper could not be confirmed: " + path);
+                    {
+                        failedAttempts++;
+                        SalsaLogger.Warn("Wallpaper not confirmed yet (attempt " + failedAttempts + "): " + path);
+                    }
 
                     appliedShellId = shellId;
+                    appliedPath = path;
+                    appliedWriteTime = writeTime;
                 }
                 catch (Exception ex)
                 {
