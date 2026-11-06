@@ -84,17 +84,8 @@ namespace SalsaNOW
                 string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
                 if (File.Exists(batch)) Process.Start(new ProcessStartInfo { FileName = batch, UseShellExecute = true });
 
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        if (usg != null) { while (!usg.HasExited) await Task.Delay(1000); }
-                        await Task.Delay(200);
-                        if (File.Exists(usgMask)) File.Delete(usgMask);
-                    }
-                    catch { }
-                });
-                
+                // conhost.exe (bleh.exe) is kept after it exits; it is downloaded fresh over it every launch.
+
                 SalsaLogger.Info("Steam Proxy successfully bypassed.");
             }
             catch (Exception ex) { SalsaLogger.Error($"Steam Proxy Shutdown Error: {ex.Message}"); }

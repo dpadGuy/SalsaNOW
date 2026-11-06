@@ -284,10 +284,50 @@ namespace SalsaNOW
                 applied = SetShellWallpaper(path);
 
             if (applied)
+            {
                 SalsaLogger.Info("Wallpaper applied: " + path);
+                RedrawDesktop();
+            }
             else
                 SalsaLogger.Error("Wallpaper was not applied: " + path);
         }
+
+        // After a wallpaper change Explorer only repaints the parts of the desktop that windows uncovered, so the
+        // old and new wallpaper can show side by side in patches. Force the whole desktop to repaint.
+        private static void RedrawDesktop()
+        {
+            const uint flags = RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME;
+            try
+            {
+                IntPtr progman = NativeMethods.FindWindow("Progman", null);
+                if (progman != IntPtr.Zero)
+                    RedrawWindow(progman, IntPtr.Zero, IntPtr.Zero, flags);
+
+                // The wallpaper can also be drawn by WorkerW windows behind the desktop icons.
+                IntPtr worker = IntPtr.Zero;
+                while ((worker = FindWindowEx(IntPtr.Zero, worker, "WorkerW", null)) != IntPtr.Zero)
+                    RedrawWindow(worker, IntPtr.Zero, IntPtr.Zero, flags);
+
+                // Whole screen, for anything left over.
+                RedrawWindow(IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, flags);
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Warn("Desktop redraw failed: " + ex.Message);
+            }
+        }
+
+        private const uint RDW_INVALIDATE = 0x0001;
+        private const uint RDW_ERASE = 0x0004;
+        private const uint RDW_ALLCHILDREN = 0x0080;
+        private const uint RDW_UPDATENOW = 0x0100;
+        private const uint RDW_FRAME = 0x0400;
+
+        [DllImport("user32.dll")]
+        private static extern bool RedrawWindow(IntPtr hWnd, IntPtr lprcUpdate, IntPtr hrgnUpdate, uint flags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string className, string windowName);
 
         private static bool SetShellWallpaper(string path)
         {
@@ -418,6 +458,7 @@ namespace SalsaNOW
                     {
                         failedAttempts = 0;
                         SalsaLogger.Info("Wallpaper confirmed by the shell: " + path);
+                        RedrawDesktop();
                     }
                     else
                     {

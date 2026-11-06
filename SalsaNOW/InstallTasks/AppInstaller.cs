@@ -40,6 +40,9 @@ namespace SalsaNOW
 
                 var tasks = apps.Select(app => Task.Run(async () =>
                 {
+                    // Each app gets its own error so one failed download names itself and doesn't hide the others.
+                    try
+                    {
                     using (var webClient = new WebClient())
                     {
                         webClient.Headers.Add("Cache-Control", "no-cache");
@@ -96,11 +99,32 @@ namespace SalsaNOW
                             if (app.run == "true") Process.Start(appZipExe);
                         }
                     }
+                    }
+                    catch (Exception ex)
+                    {
+                        SalsaLogger.Error($"{app.name} install failed ({app.url}): {DescribeError(ex)}");
+                    }
                 })).ToList();
 
                 await Task.WhenAll(tasks);
             }
-            catch (Exception ex) { SalsaLogger.Error(ex.Message); }
+            catch (Exception ex) { SalsaLogger.Error($"Apps list ({jsonUrl}) failed: {DescribeError(ex)}"); }
+        }
+
+        // WebClient wraps the real cause ("file in use", "404", "no space") inside a generic WebException;
+        // include the inner messages and the HTTP status so the log says what actually went wrong.
+        private static string DescribeError(Exception ex)
+        {
+            var parts = new List<string>();
+            for (Exception e = ex; e != null; e = e.InnerException)
+            {
+                string message = e.Message;
+                if (e is WebException web && web.Response is HttpWebResponse response)
+                    message += $" (HTTP {(int)response.StatusCode} {response.StatusDescription})";
+                if (!parts.Contains(message))
+                    parts.Add(message);
+            }
+            return string.Join(" -> ", parts);
         }
 
         // Silent background app deployment with automated cleanup of obsolete files/folders
