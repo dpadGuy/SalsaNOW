@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            string salsaNowTitle = "SalsaNOW V1.6.9.3 - by dpadGuy";
+            string salsaNowTitle = "SalsaNOW V1.6.9.3-hotfix1 - by dpadGuy";
 
             Console.Title = salsaNowTitle;
 

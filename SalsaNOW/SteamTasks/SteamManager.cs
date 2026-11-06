@@ -40,13 +40,16 @@ namespace SalsaNOW
         {
             string steamDir = Path.Combine(globalDirectory, "SalsaSteam");
 
-            // steamapps is only moved over on a brand-new install; once SalsaSteam exists it already has its own.
-            bool alreadyInstalled = Directory.Exists(steamDir);
+            // An earlier copy-based transfer could fill the disk and leave half-copied games in SalsaSteam, which
+            // then made the SalsaSteam install fail too. When SalsaSteam already exists but first-time setup isn't
+            // done, run it before the install: it clears the stale copies and frees space before extraction needs it.
+            if (Directory.Exists(steamDir) && ReadSetupState(steamDir) != SetupDone)
+                await TransferSteamAppsAsync(steamDir);
 
             await InstallOrUpdateAsync(globalDirectory, steamDir);
 
-            if (alreadyInstalled)
-                SalsaLogger.Steam("SalsaSteam folder already exists, skipping steamapps transfer.");
+            if (ReadSetupState(steamDir) == SetupDone)
+                SalsaLogger.Steam("SalsaSteam first-time setup already done, skipping steamapps transfer.");
             else
                 await TransferSteamAppsAsync(steamDir);
             RegisterSteamProtocol(steamDir);
@@ -235,8 +238,80 @@ namespace SalsaNOW
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr handle);
 
-        // Moves the system Steam's steamapps (manifests, common, workshop...) into SalsaSteam\steamapps:
-        // copies everything first, then empties the original folder only if every file copied successfully.
+        // First-time setup marker in the SalsaSteam folder. The wipe and the move run exactly once, so later
+        // launches never wait on a steamapps scan.
+        // - missing: setup never ran. SalsaSteam\steamapps is deleted, the marker is written, then the move runs.
+        // - "done": setup already ran. The transfer never runs again.
+        // The marker is written before the move starts, so even an interrupted move never causes a second wipe
+        // (which would delete games that were already moved). Files the move couldn't handle stay in the original.
+        private const string SetupMarker = ".salsasteam_setup";
+        private const string SetupDone = "done";
+
+        private static string ReadSetupState(string steamDir)
+        {
+            try
+            {
+                string path = Path.Combine(steamDir, SetupMarker);
+                return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void WriteSetupState(string steamDir, string state)
+        {
+            File.WriteAllText(Path.Combine(steamDir, SetupMarker), state);
+        }
+
+        // First-time setup wipes SalsaSteam\steamapps completely, so everyone starts the transfer from scratch.
+        // This removes everything an earlier copy-based transfer left there (half-copied games, shadercache...)
+        // and frees that space before the move starts.
+        private static void WipeSalsaSteamApps(string destination)
+        {
+            if (!Directory.Exists(destination)) return;
+
+            try
+            {
+                ForceDeleteDirectory(destination);
+                SalsaLogger.Steam($"Removed {destination}.");
+            }
+            catch (Exception ex)
+            {
+                // Something was locked: delete whatever can be deleted so the space is still freed.
+                SalsaLogger.Error($"SalsaSteam steamapps wipe: {ex.Message} Deleting what can be deleted.");
+                foreach (string file in Directory.EnumerateFiles(destination, "*", SearchOption.AllDirectories).ToList())
+                {
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                        File.Delete(file);
+                    }
+                    catch (Exception fileEx) { SalsaLogger.Error($"SalsaSteam steamapps wipe: {file} -> {fileEx.Message}"); }
+                }
+                RemoveEmptyDirectories(destination, new List<string>());
+            }
+        }
+
+        private static void ForceDeleteDirectory(string path)
+        {
+            foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+                File.SetAttributes(file, FileAttributes.Normal);
+            Directory.Delete(path, true);
+        }
+
+        // On GFN, C:\Program Files (x86)\Steam is a redirected view of I:\user\SteamShadow. Moving from the real
+        // folder keeps source and destination on the same drive (I:), so each move is an instant rename that
+        // needs no extra space. The C:\ view is used when the real folder is not reachable.
+        private const string ShadowSteamApps = @"I:\user\SteamShadow\steamapps";
+
+        // Moves the system Steam's steamapps (common, workshop, downloading...) into SalsaSteam\steamapps.
+        // Files are MOVED, never copied in bulk: each file leaves the original as soon as it is in SalsaSteam,
+        // so huge games never need double the disk space. Same-drive moves are instant renames; cross-drive
+        // moves copy one file and delete it right after, so at most a few files exist twice at any moment.
+        // App manifests (.acf) and libraryfolders.vdf are copied instead, because the original folder keeps them.
+        // Runs once: anything that fails stays in the original steamapps and is not retried.
         private static async Task TransferSteamAppsAsync(string steamDir)
         {
             try
@@ -247,21 +322,27 @@ namespace SalsaNOW
                     return;
                 }
 
-                if (!Directory.Exists(SystemSteamApps))
+                string sourceRoot = GetSteamAppsSource();
+                if (sourceRoot == null)
                 {
-                    SalsaLogger.Steam($"No steamapps found at {SystemSteamApps}, skipping transfer.");
+                    SalsaLogger.Steam($"No steamapps found at {SystemSteamApps}, nothing to transfer.");
+                    WriteSetupState(steamDir, SetupDone);
                     return;
                 }
 
                 string destination = Path.Combine(steamDir, "steamapps");
+
+                // First-time setup: wipe SalsaSteam\steamapps, then mark setup done BEFORE moving,
+                // so neither the wipe nor the move ever runs again.
+                if (ReadSetupState(steamDir) == SetupDone) return;
+
+                SalsaLogger.Steam("SalsaSteam first-time setup: removing SalsaSteam\\steamapps and starting the transfer again...");
+                await Task.Run(() => WipeSalsaSteamApps(destination));
+                WriteSetupState(steamDir, SetupDone);
+
                 Directory.CreateDirectory(destination);
 
-                SalsaLogger.Steam($"Transferring {SystemSteamApps} -> {destination} | PLEASE WAIT, IT WILL TAKE A WHILE...");
-
-                int copied = 0, skipped = 0, failed = 0;
-                string sourceRoot = Path.GetFullPath(SystemSteamApps).TrimEnd('\\');
-
-                // Any folder holding SalsaNOW.exe stays exactly where it is: not copied, not deleted.
+                // Any folder holding SalsaNOW.exe stays exactly where it is: not moved, not deleted.
                 List<string> protectedPaths = FindSalsaNowFolders(sourceRoot);
                 foreach (string p in protectedPaths)
                     SalsaLogger.Steam($"SalsaNOW.exe found, leaving untouched: {p}");
@@ -273,51 +354,118 @@ namespace SalsaNOW
                     return;
                 }
 
+                SalsaLogger.Steam($"Moving {sourceRoot} -> {destination} | PLEASE WAIT, IT CAN TAKE A WHILE...");
+
+                int moved = 0, folders = 0, failed = 0;
+
                 await Task.Run(() =>
                 {
-                    foreach (string dir in Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories))
+                    // 1. Whole game folders that SalsaSteam doesn't have yet: one rename per game when on the same drive.
+                    string common = Path.Combine(sourceRoot, "common");
+                    if (Directory.Exists(common))
                     {
-                        if (IsProtected(dir, protectedPaths)) continue;
-                        Directory.CreateDirectory(Path.Combine(destination, dir.Substring(sourceRoot.Length + 1)));
+                        foreach (string game in Directory.GetDirectories(common))
+                        {
+                            if (IsProtected(game, protectedPaths)) continue;
+
+                            string target = Path.Combine(destination, "common", Path.GetFileName(game));
+                            if (Directory.Exists(target)) continue;
+
+                            try
+                            {
+                                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                                Directory.Move(game, target);
+                                folders++;
+                                SalsaLogger.Steam($"Moved game folder: {Path.GetFileName(game)}");
+                            }
+                            catch
+                            {
+                                // Different drive or locked: it is moved file by file below instead.
+                            }
+                        }
                     }
 
+                    // 2. Everything left, file by file.
                     var files = Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
-                        .Where(f => !IsProtected(f, protectedPaths));
-                    Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = 8 }, source =>
+                        .Where(f => !IsProtected(f, protectedPaths))
+                        .ToList();
+
+                    Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = 4 }, source =>
                     {
                         string target = Path.Combine(destination, source.Substring(sourceRoot.Length + 1));
                         try
                         {
-                            if (IsSameFile(source, target)) { Interlocked.Increment(ref skipped); return; }
+                            Directory.CreateDirectory(Path.GetDirectoryName(target));
+
+                            if (IsKeptInOriginal(source))
+                            {
+                                if (!IsSameFile(source, target))
+                                {
+                                    if (File.Exists(target)) File.SetAttributes(target, FileAttributes.Normal);
+                                    File.Copy(source, target, true);
+                                    File.SetLastWriteTimeUtc(target, File.GetLastWriteTimeUtc(source));
+                                }
+                                return;
+                            }
+
+                            File.SetAttributes(source, FileAttributes.Normal);
 
                             if (File.Exists(target))
-                                File.SetAttributes(target, FileAttributes.Normal);
+                            {
+                                // Already there from an earlier run: just free the original.
+                                if (IsSameFile(source, target))
+                                {
+                                    File.Delete(source);
+                                    Interlocked.Increment(ref moved);
+                                    return;
+                                }
 
-                            File.Copy(source, target, true);
-                            File.SetLastWriteTimeUtc(target, File.GetLastWriteTimeUtc(source));
-                            Interlocked.Increment(ref copied);
+                                File.SetAttributes(target, FileAttributes.Normal);
+                                File.Delete(target);
+                            }
+
+                            File.Move(source, target);
+                            Interlocked.Increment(ref moved);
                         }
                         catch (Exception ex)
                         {
                             Interlocked.Increment(ref failed);
-                            SalsaLogger.Error($"steamapps transfer: {source} -> {ex.Message}");
+                            SalsaLogger.Error($"steamapps move: {source} -> {ex.Message}");
                         }
                     });
+
+                    RemoveEmptyDirectories(sourceRoot, protectedPaths);
                 });
 
-                string summary = $"steamapps transfer complete ({copied} copied, {skipped} unchanged, {failed} failed).";
+                string summary = $"steamapps move complete ({folders} game folders, {moved} files moved, {failed} failed).";
                 if (failed > 0)
                 {
-                    // Never delete the source if anything failed to copy, or those files would be lost.
-                    SalsaLogger.Error(summary + " Keeping original steamapps.");
+                    // Nothing is lost: failed files are still in the original steamapps.
+                    SalsaLogger.Error(summary + " Files that couldn't be moved stay in the original steamapps.");
                     return;
                 }
 
-                SalsaLogger.Steam(summary);
-                await Task.Run(() => ClearDirectory(sourceRoot, protectedPaths));
-                SalsaLogger.Steam($"Removed original contents of {SystemSteamApps}.");
+                SalsaLogger.Steam(summary + " SalsaSteam first-time setup done.");
             }
             catch (Exception ex) { SalsaLogger.Error($"steamapps transfer error: {ex.Message}"); }
+        }
+
+        // The real I:\user\SteamShadow\steamapps when it can be read (same drive as SalsaSteam), else the C:\ view.
+        private static string GetSteamAppsSource()
+        {
+            foreach (string root in new[] { ShadowSteamApps, SystemSteamApps })
+            {
+                try
+                {
+                    if (!Directory.Exists(root)) continue;
+                    Directory.EnumerateFileSystemEntries(root).Any();
+                    return Path.GetFullPath(root).TrimEnd('\\');
+                }
+                catch
+                {
+                }
+            }
+            return null;
         }
 
         // Returns every game folder under root that holds SalsaNOW.exe anywhere inside it, plus the folder
@@ -391,7 +539,7 @@ namespace SalsaNOW
             return false;
         }
 
-        // App manifests and the library list stay in the original steamapps (they are still copied to SalsaSteam too).
+        // App manifests and the library list stay in the original steamapps (they are copied to SalsaSteam, not moved).
         private static bool IsKeptInOriginal(string file)
         {
             string name = Path.GetFileName(file);
@@ -399,22 +547,10 @@ namespace SalsaNOW
                    name.Equals("libraryfolders.vdf", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Deletes everything inside a folder except protected entries, .acf files and libraryfolders.vdf; keeps the folder itself.
+        // Deletes empty folders left behind by the move, deepest first; keeps the steamapps folder itself.
         // Parent folders of protected folders are kept because they are never empty.
-        private static void ClearDirectory(string path, List<string> protectedPaths)
+        private static void RemoveEmptyDirectories(string path, List<string> protectedPaths)
         {
-            foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).ToList())
-            {
-                if (IsProtected(file, protectedPaths) || IsKeptInOriginal(file)) continue;
-                try
-                {
-                    File.SetAttributes(file, FileAttributes.Normal);
-                    File.Delete(file);
-                }
-                catch (Exception ex) { SalsaLogger.Error($"steamapps cleanup: {file} -> {ex.Message}"); }
-            }
-
-            // Deepest folders first so children are gone before their parents are checked.
             var dirs = Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories)
                 .Where(d => !IsProtected(d, protectedPaths))
                 .OrderByDescending(d => d.Length)
@@ -482,6 +618,7 @@ namespace SalsaNOW
                     DefaultPreserved.Concat(manifest.preserve ?? new List<string>()).Select(NormalizeRelative),
                     StringComparer.OrdinalIgnoreCase);
                 preserved.Add(VersionMarker);
+                preserved.Add(SetupMarker);
 
                 CleanInstallDirectory(steamDir, preserved);
                 ExtractPreserving(zipPath, steamDir, preserved);
