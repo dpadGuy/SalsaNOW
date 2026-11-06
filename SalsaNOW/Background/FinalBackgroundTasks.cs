@@ -39,11 +39,6 @@ namespace SalsaNOW
             {
                 SalsaLogger.Error("Desktop finalization failed: " + ex.Message);
             }
-            finally
-            {
-                // Release queued notices even if finalization failed before the welcome notice.
-                FirstRunNoticeDone.Set();
-            }
         }
 
         private static async Task CloseStartHookWindowAsync()
@@ -311,29 +306,9 @@ namespace SalsaNOW
             SalsaLogger.Info("Open-Shell started.");
         }
 
-        // Notices show one at a time, and notices marked afterFirstRunNotice wait until the welcome notice is closed.
-        private static readonly object NoticeLock = new object();
-        private static readonly ManualResetEventSlim FirstRunNoticeDone = new ManualResetEventSlim(false);
-
         private static void ShowFirstRunNotice(string globalDirectory)
         {
-            try
-            {
-                ShowOneTimeNotice(
-                    Path.Combine(globalDirectory, "SalsaNOWWelcome.shown"),
-                    WelcomeInstruction,
-                    WelcomeContent,
-                    waitForClose: true);
-            }
-            finally
-            {
-                FirstRunNoticeDone.Set();
-            }
-        }
-
-        // Shows a notice once; the marker file is written after the user closes it so it never shows again.
-        internal static void ShowOneTimeNotice(string marker, string instruction, string content, bool waitForClose, bool afterFirstRunNotice = false)
-        {
+            string marker = Path.Combine(globalDirectory, "SalsaNOWWelcome.shown");
             if (File.Exists(marker))
                 return;
 
@@ -341,32 +316,21 @@ namespace SalsaNOW
             {
                 try
                 {
-                    if (afterFirstRunNotice)
-                        FirstRunNoticeDone.Wait();
+                    Application.EnableVisualStyles();
+                    ShowWelcomeDialog();
 
-                    lock (NoticeLock)
-                    {
-                        if (File.Exists(marker))
-                            return;
-
-                        Application.EnableVisualStyles();
-                        ShowNoticeDialog(instruction, content);
-
-                        File.WriteAllText(marker, DateTime.Now.ToString("o"));
-                        SalsaLogger.Info("Notice acknowledged: " + Path.GetFileName(marker));
-                    }
+                    File.WriteAllText(marker, DateTime.Now.ToString("o"));
+                    SalsaLogger.Info("First-run notice acknowledged.");
                 }
                 catch (Exception ex)
                 {
-                    SalsaLogger.Error("Notice failed: " + ex.Message);
+                    SalsaLogger.Error("First-run notice failed: " + ex.Message);
                 }
             });
 
             thread.SetApartmentState(ApartmentState.STA);
-            thread.IsBackground = !waitForClose;
             thread.Start();
-            if (waitForClose)
-                thread.Join();
+            thread.Join();
         }
 
         private const string WelcomeTitle = "SalsaNOW";
@@ -380,16 +344,16 @@ namespace SalsaNOW
             "ANTICHEAT GAMES ARE NOT SUPPORTED\n" +
             "SOFTWARE THAT REQUIRES ADMIN RIGHTS AT ALL TIMES IS NOT SUPPORTED";
 
-        private static void ShowNoticeDialog(string instruction, string content)
+        private static void ShowWelcomeDialog()
         {
-            if (TryShowTaskDialog(instruction, content))
+            if (TryShowTaskDialog())
                 return;
 
-            using (Form form = CreateWelcomeForm(instruction, content))
+            using (Form form = CreateWelcomeForm())
                 form.ShowDialog();
         }
 
-        private static bool TryShowTaskDialog(string instruction, string content)
+        private static bool TryShowTaskDialog()
         {
             IntPtr buttonsPtr = IntPtr.Zero;
             IntPtr textPtr = IntPtr.Zero;
@@ -411,8 +375,8 @@ namespace SalsaNOW
                     dwFlags = 0x0008 | 0x01000000,
                     pszWindowTitle = WelcomeTitle,
                     mainIcon = new IntPtr(-1),
-                    pszMainInstruction = instruction,
-                    pszContent = content,
+                    pszMainInstruction = WelcomeInstruction,
+                    pszContent = WelcomeContent,
                     cButtons = 1,
                     pButtons = buttonsPtr,
                     nDefaultButton = 100,
@@ -435,7 +399,7 @@ namespace SalsaNOW
             }
         }
 
-        private static Form CreateWelcomeForm(string instructionText, string contentText)
+        private static Form CreateWelcomeForm()
         {
             var form = new Form
             {
@@ -501,7 +465,7 @@ namespace SalsaNOW
                 MaximumSize = new Size(360, 0),
                 Location = new Point(64, 18),
                 Font = new Font("Segoe UI", 12f),
-                Text = instructionText
+                Text = WelcomeInstruction
             };
 
             var content = new Label
@@ -509,7 +473,7 @@ namespace SalsaNOW
                 AutoSize = true,
                 MaximumSize = new Size(360, 0),
                 Font = new Font("Segoe UI", 9.75f),
-                Text = contentText
+                Text = WelcomeContent
             };
 
             body.Controls.Add(icon);
