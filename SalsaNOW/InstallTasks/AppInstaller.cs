@@ -59,8 +59,7 @@ namespace SalsaNOW
                         {
                             SalsaLogger.Info("Downloading " + app.name);
                             await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
-                            if (ShouldCreateDesktopShortcut(globalDirectory, desktopPath))
-                                CreateShortcut(app.name, desktopPath, appExePath, globalDirectory);
+                            EnsureDesktopShortcut(app.name, globalDirectory, desktopPath, appExePath, globalDirectory);
                             if (app.run == "true") Process.Start(appExePath);
                             return;
                         }
@@ -89,13 +88,13 @@ namespace SalsaNOW
                             System.IO.File.Delete(zipPath);
 
                             WriteVersionMarker(versionMarkerFile, versionKey);
-                            if (ShouldCreateDesktopShortcut(globalDirectory, desktopPath))
-                                CreateShortcut(app.name, desktopPath, appZipExe, Path.GetDirectoryName(appZipExe));
+                            EnsureDesktopShortcut(app.name, globalDirectory, desktopPath, appZipExe, Path.GetDirectoryName(appZipExe));
                             if (app.run == "true") Process.Start(appZipExe);
                         }
                         else
                         {
                             SalsaLogger.Info($"{app.name} already exists. Skipping download and respecting user desktop layout.");
+                            EnsureDesktopShortcut(app.name, globalDirectory, desktopPath, appZipExe, Path.GetDirectoryName(appZipExe));
                             if (app.run == "true") Process.Start(appZipExe);
                         }
                     }
@@ -346,12 +345,55 @@ namespace SalsaNOW
             }
         }
 
-        private static bool ShouldCreateDesktopShortcut(string globalDirectory, string desktopPath)
+        // Makes sure a desktop shortcut that is needed exists and points at the right exe, without touching good ones:
+        // - On the desktop with the right path: left alone (recreating it would move the icon to a new spot).
+        // - On the desktop with a different path, or unreadable: recreated with the right path.
+        // - Not on the desktop but in the saved shortcuts (Shortcuts or Backup Shortcuts): left alone. Saved ones are
+        //   restored by the shortcut sync, and a shortcut the user deleted stays deleted.
+        // - Nowhere: created.
+        // acceptedTargets lists extra paths that also count as right (e.g. the GFN real path of the Steam folder).
+        public static void EnsureDesktopShortcut(string name, string globalDirectory, string desktopPath, string target, string workDir, params string[] acceptedTargets)
         {
             if (System.IO.File.Exists(desktopPath))
-                return true;
+            {
+                if (ShortcutPointsTo(desktopPath, target, acceptedTargets))
+                    return;
 
-            return !BackgroundTasks.HasSavedShortcut(globalDirectory, Path.GetFileName(desktopPath));
+                CreateShortcut(name, desktopPath, target, workDir, false);
+                SalsaLogger.Info($"{name} shortcut pointed somewhere else. Recreated it.");
+                return;
+            }
+
+            if (BackgroundTasks.HasSavedShortcut(globalDirectory, Path.GetFileName(desktopPath)))
+                return;
+
+            CreateShortcut(name, desktopPath, target, workDir, false);
+            SalsaLogger.Info($"{name} shortcut created.");
+        }
+
+        private static bool ShortcutPointsTo(string lnkPath, string target, string[] acceptedTargets)
+        {
+            try
+            {
+                Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+                dynamic shell = Activator.CreateInstance(shellType);
+                dynamic lnk = shell.CreateShortcut(lnkPath);
+                string current = Convert.ToString(lnk.TargetPath) ?? "";
+                if (current.Length == 0)
+                    return false;
+
+                string normalized = Path.GetFullPath(current).TrimEnd('\\');
+                foreach (string candidate in new[] { target }.Concat(acceptedTargets ?? new string[0]))
+                {
+                    if (string.Equals(normalized, Path.GetFullPath(candidate).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         // Generates Windows shortcuts. Existing icon, arguments, and hotkey are kept unless keepExisting is false.

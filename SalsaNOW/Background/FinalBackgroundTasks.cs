@@ -202,12 +202,8 @@ namespace SalsaNOW
             }
         }
 
-        // Keeps the desktop Steam shortcut pointing at the original Steam (C:\Program Files (x86)\Steam\steam.exe).
-        // - On the desktop but pointing anywhere else (e.g. SalsaSteam, SalsaSteamFix): replaced, every launch.
-        // - Missing and never created before: created once.
-        // - Missing after it was created (the user deleted it): left deleted.
-        // SteamShortcut.created marks that it was made. A shortcut that already exists (on the desktop or saved)
-        // also counts as made.
+        // Same rule as the app shortcuts: a good Steam.lnk is left alone, a wrong one is fixed, a missing one is
+        // created unless it's in the saved shortcuts. On GFN the C:\ path can be stored as I:\user\SteamShadow.
         private static void CreateSteamDesktopShortcut(string globalDirectory)
         {
             const string steamExe = @"C:\Program Files (x86)\Steam\steam.exe";
@@ -215,70 +211,9 @@ namespace SalsaNOW
             string desktopLnk = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
                 "Steam.lnk");
-            string marker = Path.Combine(globalDirectory, "SteamShortcut.created");
 
-            try
-            {
-                if (File.Exists(desktopLnk))
-                {
-                    if (IsOriginalSteamShortcut(desktopLnk))
-                    {
-                        SalsaLogger.Info("Steam shortcut already points at the original Steam.");
-                    }
-                    else
-                    {
-                        // keepExisting: false so the wrong shortcut's arguments and icon are not carried over.
-                        AppInstaller.CreateShortcut("Steam", desktopLnk, steamExe, steamDir, false);
-                        SalsaLogger.Info("Steam shortcut pointed somewhere else. Replaced it with the original Steam.");
-                    }
-                }
-                else if (File.Exists(marker))
-                {
-                    SalsaLogger.Info("Steam shortcut was removed by the user. Not recreating it.");
-                }
-                else if (BackgroundTasks.HasSavedShortcut(globalDirectory, "Steam.lnk"))
-                {
-                    SalsaLogger.Info("Steam shortcut already saved. Skipping desktop create.");
-                }
-                else
-                {
-                    AppInstaller.CreateShortcut("Steam", desktopLnk, steamExe, steamDir, false);
-                    SalsaLogger.Info("Steam desktop shortcut created.");
-                }
-
-                if (!File.Exists(marker))
-                    File.WriteAllText(marker, DateTime.Now.ToString("o"));
-            }
-            catch (Exception ex)
-            {
-                SalsaLogger.Error("Steam desktop shortcut failed: " + ex.Message);
-            }
-        }
-
-        // True when the shortcut opens steam.exe from the original Steam with no extra arguments.
-        // On GFN the C:\ path can be stored as its real location, I:\user\SteamShadow, so both count.
-        private static bool IsOriginalSteamShortcut(string lnkPath)
-        {
-            try
-            {
-                Type shellType = Type.GetTypeFromProgID("WScript.Shell");
-                dynamic shell = Activator.CreateInstance(shellType);
-                dynamic lnk = shell.CreateShortcut(lnkPath);
-
-                string target = Convert.ToString(lnk.TargetPath) ?? "";
-                string arguments = (Convert.ToString(lnk.Arguments) ?? "").Trim();
-
-                bool rightTarget =
-                    string.Equals(target, @"C:\Program Files (x86)\Steam\steam.exe", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(target, @"I:\user\SteamShadow\steam.exe", StringComparison.OrdinalIgnoreCase);
-
-                return rightTarget && arguments.Length == 0;
-            }
-            catch
-            {
-                // Unreadable or corrupt shortcut: treat it as wrong so it gets replaced.
-                return false;
-            }
+            AppInstaller.EnsureDesktopShortcut("Steam", globalDirectory, desktopLnk, steamExe, steamDir,
+                @"I:\user\SteamShadow\steam.exe");
         }
 
         private static void PinOpenShellShortcuts()
