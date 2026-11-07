@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            string salsaNowTitle = "SalsaNOW V1.6.9.3-hotfix4 - by dpadGuy";
+            string salsaNowTitle = "SalsaNOW V1.6.9.3-hotfix5 - by dpadGuy";
 
             Console.Title = salsaNowTitle;
 
@@ -82,6 +82,15 @@ namespace SalsaNOW
             // Clear the prompt line before continuing
             Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
 
+            // One SalsaNOW per session. A second one would re-download conhost.exe, server.exe and
+            // SalsaSteamStartup.exe while the first one's copies are running, and start Steam a second time.
+            // Checked after the recovery prompt so recovery mode stays reachable while SalsaNOW runs.
+            if (!TryAcquireSingleInstance())
+            {
+                Console.WriteLine("[!] SalsaNOW is already running. Exiting...");
+                await Task.Delay(3000); Environment.Exit(0);
+            }
+
             await Startup();
 
             // Load configuration once to share settings across modules
@@ -115,57 +124,41 @@ namespace SalsaNOW
             try { await Task.Delay(Timeout.Infinite, cts.Token); } catch (TaskCanceledException) { }
         }
 
-        // Moves any SalsaSteam games back into the original Steam first, then starts Steam the old way.
-        // salsaSteam off (default): moves any SalsaSteam games back into the original Steam, then starts normal Steam
-        // the usual way (conhost.exe / bleh.exe, modified server, steamui swap).
-        // salsaSteam on: none of that. SalsaSteam's games and registry are left alone and SalsaSteamStartup.exe
-        // launches 64-bit SalsaSteam instead.
+        // salsaSteam off (default): points Steam registry entries back at the original Steam if they still name
+        // SalsaSteam, leaves SalsaSteam games where they are, then starts normal Steam the usual way
+        // (conhost.exe / bleh.exe, modified server, steamui swap).
+        // salsaSteam on: none of that. SalsaSteam's games and registry are left alone and SalsaSteamLauncher
+        // updates (when needed) and starts SalsaSteamStartup.exe, which launches 64-bit SalsaSteam.
         static async Task StartSteamAsync(string globalDirectory)
         {
             if (SalsaSettings.SalsaSteam)
             {
-                StartSalsaSteam(globalDirectory);
+                await SalsaSteamLauncher.RunAsync(globalDirectory);
                 return;
             }
 
-            await SalsaSteamRevert.RunAsync(globalDirectory);
+            await SalsaSteamRevert.RunAsync();
             await SteamManager.ShutdownServerAsync(globalDirectory);
         }
 
-        static void StartSalsaSteam(string globalDirectory)
-        {
-            string exe = Path.Combine(globalDirectory, "SalsaSteamStartup.exe");
-            if (!File.Exists(exe))
-            {
-                SalsaLogger.Error("64-bit Steam is enabled, but SalsaSteamStartup.exe was not found at " + exe);
-                return;
-            }
+        // Held for the whole run so a second SalsaNOW can tell one is already running.
+        private const string InstanceMutexName = @"Local\SalsaNOW.SingleInstance";
+        private static Mutex instanceMutex;
 
+        static bool TryAcquireSingleInstance()
+        {
             try
             {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = exe,
-                    WorkingDirectory = globalDirectory,
-                    UseShellExecute = true
-                });
-                SalsaLogger.Steam("64-bit Steam enabled. Started " + exe);
+                instanceMutex = new Mutex(false, InstanceMutexName);
+                return instanceMutex.WaitOne(0);
             }
-            catch (Exception ex)
+            catch (AbandonedMutexException)
             {
-                SalsaLogger.Error("SalsaSteamStartup.exe failed to start: " + ex.Message);
+                return true; // the previous SalsaNOW crashed without releasing it; this run owns it now
             }
-            finally
+            catch
             {
-                // Same as the normal Steam path: hide the console and run the user's startup batch.
-                NativeMethods.ShowWindow(NativeMethods.GetConsoleWindow(), NativeMethods.SW_HIDE);
-
-                string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
-                if (File.Exists(batch))
-                {
-                    try { Process.Start(new ProcessStartInfo { FileName = batch, UseShellExecute = true }); }
-                    catch (Exception ex) { SalsaLogger.Error("StartupBatch.bat failed to start: " + ex.Message); }
-                }
+                return true; // can't check: run normally rather than never starting
             }
         }
 

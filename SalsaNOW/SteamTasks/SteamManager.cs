@@ -88,7 +88,7 @@ namespace SalsaNOW
 
                 SalsaLogger.Info("Steam Proxy successfully bypassed.");
             }
-            catch (Exception ex) { SalsaLogger.Error($"Steam Proxy Shutdown Error: {ex.Message}"); }
+            catch (Exception ex) { SalsaLogger.Error($"Steam Proxy Shutdown Error: {AppInstaller.DescribeError(ex)}"); }
         }
 
         private static void SwapSteamUi()
@@ -125,8 +125,21 @@ namespace SalsaNOW
             if (!string.IsNullOrEmpty(directory))
                 Directory.CreateDirectory(directory);
 
+            // Swapped in only after a full download; a file still in use from an earlier run is kept. If the download
+            // fails but an older copy is on disk, use that instead of aborting the whole Steam start.
+            string name = Path.GetFileName(destination);
             using (var client = new WebClient())
-                await client.DownloadFileTaskAsync(new Uri(url), destination);
+            {
+                client.Headers.Add("Cache-Control", "no-cache");
+                try
+                {
+                    await AppInstaller.DownloadAndSwapAsync(client, name, url, destination);
+                }
+                catch (Exception ex) when (File.Exists(destination))
+                {
+                    SalsaLogger.Warn($"Could not update {name} ({AppInstaller.DescribeError(ex)}). Using the copy already on disk.");
+                }
+            }
         }
 
         private static async Task ApplySteamInput(bool enabled)

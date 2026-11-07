@@ -24,8 +24,11 @@ namespace SalsaNOW
             SteamInput = steamInput;
             SalsaSteam = salsaSteam;
 
+            // Always say which Steam this launch uses, so a log shows whether the toggle was read.
             if (salsaSteam)
                 SalsaLogger.Info("64-bit Steam (SalsaSteam) enabled from SalsaNOWSettings.json.");
+            else
+                SalsaLogger.Info("64-bit Steam (SalsaSteam) is off in SalsaNOWSettings.json (salsaSteam missing or false). Using the original Steam.");
 
             if (steamSilent)
                 SalsaLogger.Info("Steam silent launch enabled from SalsaNOWSettings.json.");

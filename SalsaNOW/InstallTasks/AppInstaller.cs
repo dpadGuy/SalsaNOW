@@ -38,6 +38,12 @@ namespace SalsaNOW
                     catch (Exception ex) { SalsaLogger.Error($"Custom JSON Error: {ex.Message}"); }
                 }
 
+                // SalsaSteamStartup.exe is downloaded and started by SalsaSteamLauncher (only with 64-bit Steam on);
+                // here it only hands over the entry's url and version.
+                Apps salsaSteamEntry = apps.FirstOrDefault(SalsaSteamLauncher.IsSalsaSteamStartup);
+                SalsaSteamLauncher.SetAppEntry(salsaSteamEntry);
+                apps = apps.Where(app => !SalsaSteamLauncher.IsSalsaSteamStartup(app)).ToList();
+
                 var tasks = apps.Select(app => Task.Run(async () =>
                 {
                     // Each app gets its own error so one failed download names itself and doesn't hide the others.
@@ -58,7 +64,7 @@ namespace SalsaNOW
                         if (isExe)
                         {
                             SalsaLogger.Info("Downloading " + app.name);
-                            await webClient.DownloadFileTaskAsync(new Uri(app.url), appExePath);
+                            await DownloadAndSwapAsync(webClient, app.name, app.url, appExePath);
                             EnsureDesktopShortcut(app.name, globalDirectory, desktopPath, appExePath, globalDirectory);
                             if (app.run == "true") Process.Start(appExePath);
                             return;
@@ -108,11 +114,57 @@ namespace SalsaNOW
                 await Task.WhenAll(tasks);
             }
             catch (Exception ex) { SalsaLogger.Error($"Apps list ({jsonUrl}) failed: {DescribeError(ex)}"); }
+            finally
+            {
+                // Apps list failed or has no SalsaSteam entry: don't keep SalsaSteamLauncher waiting.
+                SalsaSteamLauncher.SetAppEntry(null);
+            }
+        }
+
+        // Downloads next to the file first and swaps it in, so a failed or blocked download never leaves a broken file.
+        // If the current file is in use (running, or held open by the shell or antivirus) the current one is kept.
+        // validate (optional) checks the downloaded file before it replaces anything.
+        // Returns true when the new file is in place, false when the current one was kept because it's in use.
+        internal static async Task<bool> DownloadAndSwapAsync(WebClient webClient, string name, string url, string exePath, Func<string, bool> validate = null)
+        {
+            string downloaded = exePath + ".download";
+            await webClient.DownloadFileTaskAsync(new Uri(url), downloaded);
+
+            if (validate != null && !validate(downloaded))
+            {
+                try { System.IO.File.Delete(downloaded); } catch { }
+                throw new InvalidDataException("the downloaded file is not valid (wrong size or not an exe)");
+            }
+
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    if (System.IO.File.Exists(exePath))
+                        System.IO.File.Delete(exePath);
+                    System.IO.File.Move(downloaded, exePath);
+                    return true;
+                }
+                catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && attempt < 5)
+                {
+                    await Task.Delay(1000);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    try { System.IO.File.Delete(downloaded); } catch { }
+
+                    if (!System.IO.File.Exists(exePath))
+                        throw;
+
+                    SalsaLogger.Warn($"{name} is in use, kept the current {Path.GetFileName(exePath)}. It updates next launch. ({ex.Message})");
+                    return false;
+                }
+            }
         }
 
         // WebClient wraps the real cause ("file in use", "404", "no space") inside a generic WebException;
         // include the inner messages and the HTTP status so the log says what actually went wrong.
-        private static string DescribeError(Exception ex)
+        internal static string DescribeError(Exception ex)
         {
             var parts = new List<string>();
             for (Exception e = ex; e != null; e = e.InnerException)

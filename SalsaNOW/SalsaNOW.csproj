@@ -118,6 +118,7 @@
     <Compile Include="Recovery\RecoveryMode.cs" />
     <Compile Include="SteamTasks\SteamDetach.cs" />
     <Compile Include="SteamTasks\SteamManager.cs" />
+    <Compile Include="SteamTasks\SalsaSteamLauncher.cs" />
     <Compile Include="SteamTasks\SalsaSteamRevert.cs" />
   </ItemGroup>
   <ItemGroup>

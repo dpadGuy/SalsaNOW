@@ -274,14 +274,16 @@ namespace SalsaNOW
                 SalsaLogger.Error("Failed to set wallpaper registry: " + ex.Message);
             }
 
+            // SPI often returns success before Explorer is the shell and still leaves a blank desktop.
+            // SetWallpaper is what actually paints the picture, including after Zxplorer replaces Explorer.
             bool applied = NativeMethods.SystemParametersInfo(
                 SPI_SETDESKWALLPAPER,
                 0,
                 path,
                 SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
 
-            if (!applied)
-                applied = SetShellWallpaper(path);
+            if (SetShellWallpaper(path))
+                applied = true;
 
             if (applied)
             {
@@ -344,16 +346,46 @@ namespace SalsaNOW
             }
         }
 
-        private static bool IsShellWallpaperSet(string path)
+        // Windows copies a set picture to TranscodedWallpaper and GetWallpaper returns that path,
+        // not the jpg we passed in. Comparing the two always fails and the watcher would reapply forever.
+        private static bool WallpaperStillOurs(string path)
+        {
+            if (!LooksLikeOurWallpaper(GetRegistryWallpaper(), path))
+                return false;
+
+            string shell = TryGetShellWallpaper();
+            if (shell == null)
+                return true;
+
+            return LooksLikeOurWallpaper(shell, path);
+        }
+
+        private static bool LooksLikeOurWallpaper(string current, string path)
+        {
+            if (string.IsNullOrEmpty(current))
+                return false;
+
+            if (string.Equals(current, path, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            string name = Path.GetFileName(current);
+            return name.Equals("TranscodedWallpaper", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("Transcoded_", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string TryGetShellWallpaper()
         {
             try
             {
                 var desktop = (IDesktopWallpaper)new DesktopWallpaper();
-                return string.Equals(desktop.GetWallpaper(null), path, StringComparison.OrdinalIgnoreCase);
+                string wallpaper;
+                if (desktop.GetWallpaper(null, out wallpaper) != 0)
+                    return null;
+                return wallpaper ?? "";
             }
             catch
             {
-                return false;
+                return null;
             }
         }
 
@@ -432,10 +464,8 @@ namespace SalsaNOW
                         reason = "desktop shell started";
                     else if (!string.Equals(path, appliedPath, StringComparison.OrdinalIgnoreCase) || writeTime != appliedWriteTime)
                         reason = "wallpaper file changed";
-                    else if (!IsShellWallpaperSet(path))
-                        reason = "shell shows a different wallpaper";
-                    else if (!string.Equals(GetRegistryWallpaper(), path, StringComparison.OrdinalIgnoreCase))
-                        reason = "registry shows a different wallpaper";
+                    else if (!WallpaperStillOurs(path))
+                        reason = "wallpaper was replaced";
 
                     if (reason == null)
                     {
@@ -451,10 +481,10 @@ namespace SalsaNOW
                     ApplyWallpaper(path);
 
                     await Task.Delay(1000);
-                    if (!IsShellWallpaperSet(path))
+                    if (!WallpaperStillOurs(path))
                         SetShellWallpaper(path);
 
-                    if (IsShellWallpaperSet(path))
+                    if (WallpaperStillOurs(path))
                     {
                         failedAttempts = 0;
                         SalsaLogger.Info("Wallpaper confirmed by the shell: " + path);
@@ -497,8 +527,10 @@ namespace SalsaNOW
         {
             void SetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID, [MarshalAs(UnmanagedType.LPWStr)] string wallpaper);
 
-            [return: MarshalAs(UnmanagedType.LPWStr)]
-            string GetWallpaper([MarshalAs(UnmanagedType.LPWStr)] string monitorID);
+            [PreserveSig]
+            int GetWallpaper(
+                [MarshalAs(UnmanagedType.LPWStr)] string monitorID,
+                [MarshalAs(UnmanagedType.LPWStr)] out string wallpaper);
         }
 
         private static void SafeDeleteDirectory(string path, int retries = 3)

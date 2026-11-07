@@ -40,12 +40,28 @@ namespace SalsaNOW
             steamInput = false;
             salsaSteam = false;
             if (!File.Exists(ConfigPath))
+            {
+                SalsaLogger.Warn(ConfigPath + " not found. Using default settings (64-bit Steam off).");
                 return false;
+            }
 
-            SalsaNowSettingsFile settings;
+            // Read at startup only, so a brief lock (Settings app saving, antivirus scan) must not turn every
+            // setting off for the whole session: retry a few times first.
+            SalsaNowSettingsFile settings = null;
             DateTime writeTime;
-            if (!TryReadSettings(out settings, out writeTime))
+            bool read = false;
+            for (int attempt = 0; attempt < 5 && !read; attempt++)
+            {
+                if (attempt > 0)
+                    Thread.Sleep(500);
+                read = TryReadSettings(out settings, out writeTime);
+            }
+
+            if (!read)
+            {
+                SalsaLogger.Error("Could not read " + ConfigPath + ". Using default settings this launch (64-bit Steam off).");
                 return false;
+            }
 
             steamSilentLaunch = settings.SteamSilentLaunch == true;
             bingWallpaper = settings.BingWallpaper == true;
