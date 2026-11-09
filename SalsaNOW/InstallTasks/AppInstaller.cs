@@ -38,8 +38,8 @@ namespace SalsaNOW
                     catch (Exception ex) { SalsaLogger.Error($"Custom JSON Error: {ex.Message}"); }
                 }
 
-                // SalsaSteamStartup.exe is downloaded and started by SalsaSteamLauncher (only with 64-bit Steam on);
-                // here it only hands over the entry's url and version.
+                // SalsaSteamStartup.exe is installed by SalsaSteamLauncher on every launch, and started only when
+                // 64-bit Steam is on. Here it only hands over the entry's url and version.
                 Apps salsaSteamEntry = apps.FirstOrDefault(SalsaSteamLauncher.IsSalsaSteamStartup);
                 SalsaSteamLauncher.SetAppEntry(salsaSteamEntry);
                 apps = apps.Where(app => !SalsaSteamLauncher.IsSalsaSteamStartup(app)).ToList();

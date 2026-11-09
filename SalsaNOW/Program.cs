@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            string salsaNowTitle = "SalsaNOW V1.6.9.3-hotfix5 - by dpadGuy";
+            string salsaNowTitle = "SalsaNOW V1.6.9.3-hotfix6 - by dpadGuy";
 
             Console.Title = salsaNowTitle;
 
@@ -124,11 +124,12 @@ namespace SalsaNOW
             try { await Task.Delay(Timeout.Infinite, cts.Token); } catch (TaskCanceledException) { }
         }
 
+        // SalsaSteamStartup.exe is installed and its desktop shortcut is made on every launch.
         // salsaSteam off (default): points Steam registry entries back at the original Steam if they still name
         // SalsaSteam, leaves SalsaSteam games where they are, then starts normal Steam the usual way
-        // (conhost.exe / bleh.exe, modified server, steamui swap).
+        // (conhost.exe / bleh.exe, modified server, steamui swap). SalsaSteamStartup is not started.
         // salsaSteam on: none of that. SalsaSteam's games and registry are left alone and SalsaSteamLauncher
-        // updates (when needed) and starts SalsaSteamStartup.exe, which launches 64-bit SalsaSteam.
+        // starts SalsaSteamStartup.exe, which launches 64-bit SalsaSteam.
         static async Task StartSteamAsync(string globalDirectory)
         {
             if (SalsaSettings.SalsaSteam)
@@ -137,6 +138,13 @@ namespace SalsaNOW
                 return;
             }
 
+            await Task.WhenAll(
+                SalsaSteamLauncher.InstallAsync(globalDirectory),
+                StartOriginalSteamAsync(globalDirectory));
+        }
+
+        static async Task StartOriginalSteamAsync(string globalDirectory)
+        {
             await SalsaSteamRevert.RunAsync();
             await SteamManager.ShutdownServerAsync(globalDirectory);
         }

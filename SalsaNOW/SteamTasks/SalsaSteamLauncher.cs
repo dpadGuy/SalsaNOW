@@ -1,23 +1,24 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace SalsaNOW
 {
-    // Owns SalsaSteamStartup.exe when 64-bit Steam (salsaSteam) is on: SalsaNOW starts it, so SalsaNOW alone decides
-    // when it is downloaded. The apps list only supplies its url and version (the "SalsaSteam 64-bit" entry) and
-    // never downloads it itself.
+    // Owns SalsaSteamStartup.exe. SalsaNOW installs it on every launch and puts its shortcut on the desktop.
+    // The apps list only supplies its url and version (the "SalsaSteam 64-bit" entry) and never downloads it itself.
     //
-    // Every launch with the toggle on:
-    // 1. Already running (e.g. started by hand): leave it alone, don't download over it, don't start a second one.
-    // 2. Download only when the exe is missing, there is no version marker yet, or the apps list has a newer version.
+    // Every launch:
+    // 1. Download only when the exe is missing, there is no version marker yet, or the apps list has a newer version.
     //    The download lands in a temp file, must be a real exe (MZ header, sane size), and only then replaces the old one.
-    // 3. A failed or blocked update keeps the exe already on disk.
-    // 4. Start it.
-    // With the toggle off, nothing here runs: SalsaSteamStartup.exe is not downloaded, updated or started.
+    // 2. A failed or blocked update keeps the exe already on disk.
+    // 3. Make the desktop shortcut.
+    // With salsaSteam on, it is also started. Already running (e.g. started by hand): leave it alone, don't start a second one.
+    // With the toggle off, it is installed and the shortcut is made, but it is not started.
     internal static class SalsaSteamLauncher
     {
         public const string ExeName = "SalsaSteamStartup.exe";
@@ -37,18 +38,13 @@ namespace SalsaNOW
         // without one. Only the first call counts.
         public static void SetAppEntry(Apps entry) => entrySource.TrySetResult(entry);
 
-        public static async Task RunAsync(string globalDirectory)
+        // Downloads or updates SalsaSteamStartup.exe and makes its desktop shortcut. Does not start it.
+        public static async Task InstallAsync(string globalDirectory)
         {
             string exe = Path.Combine(globalDirectory, ExeName);
 
             try
             {
-                if (IsRunning())
-                {
-                    SalsaLogger.Steam("64-bit Steam enabled. SalsaSteamStartup is already running, leaving it alone.");
-                    return;
-                }
-
                 Apps entry = await WaitForEntryAsync();
                 if (entry == null)
                     SalsaLogger.Warn("SalsaSteamStartup is not in the apps list (or the list failed). Using the copy on disk.");
@@ -57,30 +53,40 @@ namespace SalsaNOW
 
                 if (!File.Exists(exe))
                 {
-                    SalsaLogger.Error("64-bit Steam is enabled, but " + exe + " is missing and could not be downloaded.");
+                    SalsaLogger.Error("SalsaSteamStartup is missing and could not be downloaded: " + exe);
                     return;
                 }
 
-                if (entry != null)
-                {
-                    string desktopPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), entry.name + ".lnk");
-                    AppInstaller.EnsureDesktopShortcut(entry.name, globalDirectory, desktopPath, exe, globalDirectory);
-                }
+                string name = entry != null && !string.IsNullOrWhiteSpace(entry.name) ? entry.name : "SalsaSteam";
+                string desktopPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), name + ".lnk");
+                AppInstaller.EnsureDesktopShortcut(name, globalDirectory, desktopPath, exe, globalDirectory);
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("SalsaSteamStartup install failed: " + AppInstaller.DescribeError(ex));
+            }
+        }
 
-                // Checked again: the user may have started it from the shortcut while the update ran.
+        public static async Task RunAsync(string globalDirectory)
+        {
+            string exe = Path.Combine(globalDirectory, ExeName);
+
+            try
+            {
+                await InstallAsync(globalDirectory);
+
+                if (!File.Exists(exe))
+                    return;
+
                 if (IsRunning())
                 {
-                    SalsaLogger.Steam("64-bit Steam enabled. SalsaSteamStartup was started meanwhile, leaving it alone.");
+                    SalsaLogger.Steam("64-bit Steam enabled. SalsaSteamStartup is already running, leaving it alone.");
                     return;
                 }
 
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = exe,
-                    WorkingDirectory = globalDirectory,
-                    UseShellExecute = true
-                });
-                SalsaLogger.Steam("64-bit Steam enabled. Started " + exe);
+                // Its own console. SalsaNOW does not inherit the handles and does not read the output.
+                StartInNewConsole(exe, globalDirectory);
+                SalsaLogger.Steam("64-bit Steam enabled. Started " + exe + " in a new window.");
             }
             catch (Exception ex)
             {
@@ -106,7 +112,7 @@ namespace SalsaNOW
             if (await Task.WhenAny(entry, Task.Delay(EntryTimeout)) == entry)
                 return entry.Result;
 
-            SalsaLogger.Warn("The apps list is taking long. Starting SalsaSteamStartup without checking for an update.");
+            SalsaLogger.Warn("The apps list is taking long. Installing SalsaSteamStartup without checking for an update.");
             return null;
         }
 
@@ -227,6 +233,74 @@ namespace SalsaNOW
             Process[] running = Process.GetProcessesByName(ProcessName);
             foreach (Process p in running) p.Dispose();
             return running.Length > 0;
+        }
+
+        private const uint CREATE_NEW_CONSOLE = 0x00000010;
+        private const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
+
+        // CREATE_NEW_CONSOLE gives SalsaSteamStartup its own window. Handles are not inherited, so its output
+        // never arrives on SalsaNOW's console and nothing here reads it.
+        private static void StartInNewConsole(string exe, string workingDirectory)
+        {
+            var startup = new STARTUPINFO();
+            startup.cb = Marshal.SizeOf(startup);
+
+            PROCESS_INFORMATION process;
+            string commandLine = "\"" + exe + "\"";
+            if (!CreateProcess(exe, commandLine, IntPtr.Zero, IntPtr.Zero, false,
+                CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP, IntPtr.Zero, workingDirectory, ref startup, out process))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool CreateProcess(
+            string applicationName,
+            string commandLine,
+            IntPtr processAttributes,
+            IntPtr threadAttributes,
+            bool inheritHandles,
+            uint creationFlags,
+            IntPtr environment,
+            string currentDirectory,
+            ref STARTUPINFO startupInfo,
+            out PROCESS_INFORMATION processInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct STARTUPINFO
+        {
+            public int cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public int dwX;
+            public int dwY;
+            public int dwXSize;
+            public int dwYSize;
+            public int dwXCountChars;
+            public int dwYCountChars;
+            public int dwFillAttribute;
+            public int dwFlags;
+            public short wShowWindow;
+            public short cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput;
+            public IntPtr hStdOutput;
+            public IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_INFORMATION
+        {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public int dwProcessId;
+            public int dwThreadId;
         }
 
         private static string ReadMarker(string path)
