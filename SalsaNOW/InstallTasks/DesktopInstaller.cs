@@ -200,7 +200,7 @@ namespace SalsaNOW
             }
         }
 
-        private static bool IsDesktopAvailable()
+        internal static bool IsDesktopAvailable()
         {
             var explorerIds = new HashSet<uint>();
             foreach (Process process in Process.GetProcessesByName("explorer"))

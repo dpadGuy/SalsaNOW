@@ -31,7 +31,7 @@ namespace SalsaNOW
                 if (!hookTask.IsCompleted)
                     await Task.WhenAny(hookTask, Task.Delay(1500));
 
-                StartOpenShell(globalDirectory);
+                await StartOpenShell(globalDirectory);
                 SalsaNOWSettingsApply.RefreshShellAppearance();
                 ShowFirstRunNotice(globalDirectory);
             }
@@ -278,7 +278,7 @@ namespace SalsaNOW
             }
         }
 
-        private static void StartOpenShell(string globalDirectory)
+        private static async Task StartOpenShell(string globalDirectory)
         {
             string startMenu = Path.Combine(globalDirectory, "SilentApps", "Open-Shell", "StartMenu.exe");
             if (!File.Exists(startMenu))
@@ -287,19 +287,117 @@ namespace SalsaNOW
                 return;
             }
 
-            string menuXml = Path.Combine(globalDirectory, "SilentApps", "Open-Shell", "Menu Settings.xml");
+            while (!DesktopInstaller.IsDesktopAvailable())
+                await Task.Delay(200);
+
+            await Task.Delay(3000);
+
+            string openShellDir = Path.GetDirectoryName(startMenu);
+            string menuXml = Path.Combine(openShellDir, "Menu Settings.xml");
             if (File.Exists(menuXml))
             {
-                Process.Start(new ProcessStartInfo
+                try
                 {
-                    FileName = startMenu,
-                    Arguments = "-xml \"" + menuXml + "\"",
-                    UseShellExecute = true
-                });
+                    Process import = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = startMenu,
+                        Arguments = "-xml \"" + menuXml + "\"",
+                        WorkingDirectory = openShellDir,
+                        UseShellExecute = true
+                    });
+                    if (import != null)
+                    {
+                        import.WaitForExit(5000);
+                        import.Dispose();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SalsaLogger.Error("Open-Shell settings were not imported: " + ex.Message);
+                }
             }
 
-            Process.Start(startMenu);
-            SalsaLogger.Info("Open-Shell started.");
+            var start = new ProcessStartInfo
+            {
+                FileName = startMenu,
+                WorkingDirectory = openShellDir,
+                UseShellExecute = true
+            };
+
+            bool retry = false;
+            while (!IsOpenShellRunning())
+            {
+                try
+                {
+                    Process.Start(start);
+                    if (retry)
+                        SalsaLogger.Warn("Open-Shell exited. Starting it again.");
+                    else
+                        SalsaLogger.Info("Open-Shell started.");
+                }
+                catch (Exception ex)
+                {
+                    SalsaLogger.Error("Open-Shell failed to start: " + ex.Message);
+                }
+
+                retry = true;
+                await Task.Delay(1000);
+            }
+
+            _ = KeepOpenShellRunning(start);
+        }
+
+        private static async Task KeepOpenShellRunning(ProcessStartInfo start)
+        {
+            try
+            {
+                while (true)
+                {
+                    await Task.Delay(1000);
+                    if (IsOpenShellRunning())
+                        continue;
+
+                    try
+                    {
+                        Process.Start(start);
+                        SalsaLogger.Warn("Open-Shell exited. Starting it again.");
+                    }
+                    catch (Exception ex)
+                    {
+                        SalsaLogger.Error("Open-Shell failed to start: " + ex.Message);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SalsaLogger.Error("Open-Shell watch failed: " + ex.Message);
+            }
+        }
+
+        private static bool IsOpenShellRunning()
+        {
+            Process[] processes = Process.GetProcessesByName("StartMenu");
+            try
+            {
+                foreach (Process process in processes)
+                {
+                    try
+                    {
+                        if (!process.HasExited)
+                            return true;
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                return false;
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
         }
 
         private static void ShowFirstRunNotice(string globalDirectory)
