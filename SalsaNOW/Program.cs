@@ -22,7 +22,7 @@ namespace SalsaNOW
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
             SteamDetach.RemoveSteamEnvironments();
 
-            string salsaNowTitle = "SalsaNOW V1.6.9.3-hotfix6 - by dpadGuy";
+            string salsaNowTitle = "SalsaNOW V1.6.9.3-hotfix7 - by dpadGuy";
 
             Console.Title = salsaNowTitle;
 
@@ -92,6 +92,9 @@ namespace SalsaNOW
             }
 
             await Startup();
+
+            // Overlay stays loaded. Drop its process hooks before anything else is started.
+            SteamDetach.DisarmOverlay();
 
             // Load configuration once to share settings across modules
             SalsaSettings.Load();
@@ -182,6 +185,7 @@ namespace SalsaNOW
                     
                     // Initialize Logger here so it knows the global directory path
                     SalsaLogger.Initialize(globalDirectory);
+                    SteamDetach.LogDisarmResult();
                     SalsaLogger.Info($"Main directory created {globalDirectory}");
                 }
             }
