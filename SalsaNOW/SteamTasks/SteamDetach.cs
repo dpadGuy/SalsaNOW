@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -45,6 +46,11 @@ namespace SalsaNOW
             overlay.IsBackground = true;
             overlay.Name = "Steam overlay disarm";
             overlay.Start();
+
+            var gameManager = new Thread(WatchAllowedOverlays);
+            gameManager.IsBackground = true;
+            gameManager.Name = "Steam overlay allow";
+            gameManager.Start();
         }
 
         public static void DisarmOverlay()
@@ -83,7 +89,7 @@ namespace SalsaNOW
 
                 ResultLogged = true;
                 if (HooksRemoved > 0)
-                    SalsaLogger.Steam("Steam overlay will not attach to new processes");
+                    SalsaLogger.Steam("Steam overlay will not attach to new processes, only whitelisted ones.");
                 else
                     SalsaLogger.Warn("Steam overlay is loaded, but its process hooks were not found.");
             }
@@ -104,6 +110,304 @@ namespace SalsaNOW
                 "PATH",
                 string.Join(";", kept),
                 EnvironmentVariableTarget.Process);
+        }
+
+        private static readonly string[] OverlayProcesses = { "Game Manager", "PlayGTAV", "GTA5_Enhanced" };
+
+        private static void WatchAllowedOverlays()
+        {
+            while (true)
+            {
+                try
+                {
+                    foreach (string processName in OverlayProcesses)
+                        LoadOverlayInto(processName);
+                    ForgetExitedOverlays();
+                }
+                catch (Exception ex)
+                {
+                    SalsaLogger.Error("Steam overlay allow check failed: " + ex.Message);
+                }
+
+                Thread.Sleep(500);
+            }
+        }
+
+        private static void LoadOverlayInto(string processName)
+        {
+            Process[] processes = Process.GetProcessesByName(processName);
+            try
+            {
+                foreach (Process process in processes)
+                {
+                    uint pid;
+                    try
+                    {
+                        if (process.HasExited)
+                            continue;
+                        pid = (uint)process.Id;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (OverlayLoaded.Contains(pid))
+                        continue;
+                    if (LoadOverlay(pid))
+                    {
+                        OverlayLoaded.Add(pid);
+                        SalsaLogger.Steam("Loaded the Steam overlay into " + processName + ".");
+                    }
+                }
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
+        }
+
+        private static void ForgetExitedOverlays()
+        {
+            OverlayLoaded.RemoveWhere(pid =>
+            {
+                try
+                {
+                    Process.GetProcessById((int)pid).Dispose();
+                    return false;
+                }
+                catch
+                {
+                    return true;
+                }
+            });
+        }
+
+        private static bool LoadOverlay(uint pid)
+        {
+            IntPtr process = OpenProcess(ProcessInjectAccess, false, pid);
+            if (process == IntPtr.Zero)
+                return false;
+
+            try
+            {
+                bool wow64;
+                if (!IsWow64Process(process, out wow64))
+                    wow64 = false;
+                if (ProcessHasOverlay(pid))
+                    return true;
+
+                string dll = OverlayDllPath(wow64);
+                if (string.IsNullOrEmpty(dll))
+                    return false;
+
+                IntPtr loadLibrary = wow64
+                    ? FindRemoteLoadLibrary(process, pid)
+                    : GetProcAddress(GetModuleHandle("kernel32.dll"), "LoadLibraryW");
+                if (loadLibrary == IntPtr.Zero)
+                    return false;
+
+                byte[] path = Encoding.Unicode.GetBytes(dll + "\0");
+                IntPtr remote = VirtualAllocEx(process, IntPtr.Zero, (UIntPtr)path.Length, 0x3000, PageReadWrite);
+                if (remote == IntPtr.Zero)
+                    return false;
+
+                try
+                {
+                    IntPtr written;
+                    if (!WriteProcessMemory(process, remote, path, path.Length, out written))
+                        return false;
+
+                    IntPtr thread = CreateRemoteThread(process, IntPtr.Zero, UIntPtr.Zero, loadLibrary, remote, 0, IntPtr.Zero);
+                    if (thread == IntPtr.Zero)
+                        return false;
+
+                    try
+                    {
+                        WaitForSingleObject(thread, 8000);
+                        uint exitCode;
+                        if (!GetExitCodeThread(thread, out exitCode) || exitCode == 0)
+                            return false;
+                        return true;
+                    }
+                    finally
+                    {
+                        CloseHandle(thread);
+                    }
+                }
+                finally
+                {
+                    VirtualFreeEx(process, remote, UIntPtr.Zero, 0x8000);
+                }
+            }
+            finally
+            {
+                CloseHandle(process);
+            }
+        }
+
+        private static bool ProcessHasOverlay(uint pid)
+        {
+            IntPtr snapshot = CreateToolhelp32Snapshot(0x18, pid);
+            if (snapshot == InvalidHandle)
+                return false;
+
+            try
+            {
+                ModuleEntry entry = new ModuleEntry();
+                entry.Size = (uint)Marshal.SizeOf(typeof(ModuleEntry));
+                if (!Module32First(snapshot, ref entry))
+                    return false;
+
+                do
+                {
+                    if (entry.Module.Equals("GameOverlayRenderer64.dll", StringComparison.OrdinalIgnoreCase) ||
+                        entry.Module.Equals("GameOverlayRenderer.dll", StringComparison.OrdinalIgnoreCase))
+                        return true;
+                    entry.Size = (uint)Marshal.SizeOf(typeof(ModuleEntry));
+                }
+                while (Module32Next(snapshot, ref entry));
+            }
+            finally
+            {
+                CloseHandle(snapshot);
+            }
+
+            return false;
+        }
+
+        private static string OverlayDllPath(bool wow64)
+        {
+            string fileName = wow64 ? "GameOverlayRenderer.dll" : "GameOverlayRenderer64.dll";
+            IntPtr loaded = GetModuleHandle(fileName);
+            if (loaded != IntPtr.Zero)
+            {
+                var path = new StringBuilder(1024);
+                if (GetModuleFileName(loaded, path, path.Capacity) > 0 && File.Exists(path.ToString()))
+                    return path.ToString();
+            }
+
+            string steam = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Steam", fileName);
+            if (File.Exists(steam))
+                return steam;
+            return null;
+        }
+
+        private static IntPtr FindRemoteLoadLibrary(IntPtr process, uint pid)
+        {
+            IntPtr kernel32 = IntPtr.Zero;
+            IntPtr snapshot = CreateToolhelp32Snapshot(0x18, pid);
+            if (snapshot == InvalidHandle)
+                return IntPtr.Zero;
+
+            try
+            {
+                ModuleEntry entry = new ModuleEntry();
+                entry.Size = (uint)Marshal.SizeOf(typeof(ModuleEntry));
+                if (!Module32First(snapshot, ref entry))
+                    return IntPtr.Zero;
+
+                do
+                {
+                    if (entry.Module.Equals("kernel32.dll", StringComparison.OrdinalIgnoreCase))
+                    {
+                        kernel32 = entry.BaseAddress;
+                        break;
+                    }
+                    entry.Size = (uint)Marshal.SizeOf(typeof(ModuleEntry));
+                }
+                while (Module32Next(snapshot, ref entry));
+            }
+            finally
+            {
+                CloseHandle(snapshot);
+            }
+
+            if (kernel32 == IntPtr.Zero)
+                return IntPtr.Zero;
+
+            byte[] dos = ReadRemote(process, kernel32.ToInt64(), 64);
+            if (dos == null || BitConverter.ToUInt16(dos, 0) != 0x5A4D)
+                return IntPtr.Zero;
+
+            int peOffset = BitConverter.ToInt32(dos, 0x3C);
+            if (peOffset <= 0 || peOffset > 4096)
+                return IntPtr.Zero;
+
+            byte[] pe = ReadRemote(process, kernel32.ToInt64() + peOffset, 248);
+            if (pe == null || BitConverter.ToUInt32(pe, 0) != 0x00004550)
+                return IntPtr.Zero;
+
+            ushort magic = BitConverter.ToUInt16(pe, 24);
+            int exportOffset = magic == 0x20B ? 136 : magic == 0x10B ? 120 : -1;
+            if (exportOffset < 0 || exportOffset + 8 > pe.Length)
+                return IntPtr.Zero;
+
+            uint exportRva = BitConverter.ToUInt32(pe, exportOffset);
+            if (exportRva == 0)
+                return IntPtr.Zero;
+
+            byte[] directory = ReadRemote(process, kernel32.ToInt64() + exportRva, 40);
+            if (directory == null)
+                return IntPtr.Zero;
+
+            uint functionCount = BitConverter.ToUInt32(directory, 20);
+            uint nameCount = BitConverter.ToUInt32(directory, 24);
+            uint functionRva = BitConverter.ToUInt32(directory, 28);
+            uint nameRva = BitConverter.ToUInt32(directory, 32);
+            uint ordinalRva = BitConverter.ToUInt32(directory, 36);
+            if (nameCount == 0 || nameCount > 8192 || functionCount == 0 || functionCount > 8192)
+                return IntPtr.Zero;
+
+            byte[] names = ReadRemote(process, kernel32.ToInt64() + nameRva, (int)nameCount * 4);
+            byte[] ordinals = ReadRemote(process, kernel32.ToInt64() + ordinalRva, (int)nameCount * 2);
+            byte[] functions = ReadRemote(process, kernel32.ToInt64() + functionRva, (int)functionCount * 4);
+            if (names == null || ordinals == null || functions == null)
+                return IntPtr.Zero;
+
+            for (int i = 0; i < nameCount; i++)
+            {
+                uint nameEntry = BitConverter.ToUInt32(names, i * 4);
+                string name = ReadRemoteAnsi(process, kernel32.ToInt64() + nameEntry, 32);
+                if (!string.Equals(name, "LoadLibraryW", StringComparison.Ordinal))
+                    continue;
+
+                ushort ordinal = BitConverter.ToUInt16(ordinals, i * 2);
+                if (ordinal >= functionCount)
+                    return IntPtr.Zero;
+
+                uint function = BitConverter.ToUInt32(functions, ordinal * 4);
+                return new IntPtr(kernel32.ToInt64() + function);
+            }
+
+            return IntPtr.Zero;
+        }
+
+        private static byte[] ReadRemote(IntPtr process, long address, int count)
+        {
+            if (count <= 0)
+                return null;
+
+            byte[] buffer = new byte[count];
+            IntPtr read;
+            if (!ReadProcessMemory(process, new IntPtr(address), buffer, count, out read))
+                return null;
+            if (read.ToInt64() < count)
+                return null;
+            return buffer;
+        }
+
+        private static string ReadRemoteAnsi(IntPtr process, long address, int max)
+        {
+            byte[] buffer = ReadRemote(process, address, max);
+            if (buffer == null)
+                return null;
+
+            int length = 0;
+            while (length < buffer.Length && buffer[length] != 0)
+                length++;
+            return Encoding.ASCII.GetString(buffer, 0, length);
         }
 
         private static void WatchOverlay()
@@ -659,6 +963,7 @@ namespace SalsaNOW
         }
 
         private static readonly object DisarmGate = new object();
+        private static readonly HashSet<uint> OverlayLoaded = new HashSet<uint>();
         private static int HooksRemoved;
         private static bool SawOverlay;
         private static bool ResultLogged;
@@ -678,6 +983,7 @@ namespace SalsaNOW
 
         private const uint Th32CsSnapThread = 0x00000004;
         private const uint ThreadSuspendAccess = 0x0042;
+        private const uint ProcessInjectAccess = 0x043A;
         private const uint MemCommit = 0x1000;
         private const uint PageGuard = 0x100;
         private const uint PageReadWrite = 0x04;
@@ -728,6 +1034,39 @@ namespace SalsaNOW
         private static extern int NtQueryInformationThread(IntPtr threadHandle, int threadInformationClass, out IntPtr threadInformation, IntPtr threadInformationLength, IntPtr returnLength);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool IsWow64Process(IntPtr hProcess, out bool wow64Process);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr VirtualAllocEx(IntPtr hProcess, IntPtr lpAddress, UIntPtr dwSize, uint flAllocationType, uint flProtect);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, UIntPtr dwSize, uint dwFreeType);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool WriteProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int nSize, out IntPtr lpNumberOfBytesWritten);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int nSize, out IntPtr lpNumberOfBytesRead);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, UIntPtr dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetExitCodeThread(IntPtr hThread, out uint lpExitCode);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool Module32First(IntPtr hSnapshot, ref ModuleEntry lpme);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool Module32Next(IntPtr hSnapshot, ref ModuleEntry lpme);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
 
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -760,6 +1099,23 @@ namespace SalsaNOW
             public uint State;
             public uint Protect;
             public uint Type;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct ModuleEntry
+        {
+            public uint Size;
+            public uint ModuleId;
+            public uint ProcessId;
+            public uint GlobalUsage;
+            public uint ProcessUsage;
+            public IntPtr BaseAddress;
+            public uint BaseSize;
+            public IntPtr ModuleHandle;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+            public string Module;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string ExePath;
         }
 
         [StructLayout(LayoutKind.Sequential)]
