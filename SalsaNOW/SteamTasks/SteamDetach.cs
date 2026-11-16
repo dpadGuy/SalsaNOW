@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -12,45 +11,63 @@ namespace SalsaNOW
 {
     internal class SteamDetach
     {
-        public static void RemoveSteamEnvironments()
+        // WARNING: Do not modify the environment of Steam or SalsaSteam, or of any program they start,
+        // unless it is really, really needed. They inherit SalsaNOW's environment unchanged, including
+        // the shader cache, PATH, and every Steam variable. Wiping that makes games such as CS2 run
+        // extremely badly. Only programs that are not Steam or SalsaSteam get a cleaned environment,
+        // and only through StartClean.
+        public static Process StartClean(ProcessStartInfo info)
         {
-            IDictionary variables =
-                Environment.GetEnvironmentVariables(
-                    EnvironmentVariableTarget.Process);
+            ApplyCleanEnvironment(info);
+            return Process.Start(info);
+        }
 
-            var namesToRemove = new List<string>();
+        public static void ApplyCleanEnvironment(ProcessStartInfo info)
+        {
+            info.UseShellExecute = false;
 
-            foreach (DictionaryEntry variable in variables)
+            var env = info.EnvironmentVariables;
+            var remove = new List<string>();
+            foreach (string key in env.Keys)
             {
-                string name = variable.Key.ToString();
-                string value = variable.Value as string ?? "";
-
-                if (name.Equals("PATH", StringComparison.OrdinalIgnoreCase))
+                if (key.Equals("PATH", StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                if (IsSteamVariable(name) || ValuePointsAtSteam(value))
-                    namesToRemove.Add(name);
+                string value = env[key] ?? "";
+                if (IsSteamVariable(key) || ValuePointsAtSteam(value))
+                    remove.Add(key);
             }
 
-            foreach (string name in namesToRemove)
+            foreach (string key in remove)
+                env.Remove(key);
+
+            string pathKey = null;
+            foreach (string key in env.Keys)
             {
-                Environment.SetEnvironmentVariable(
-                    name,
-                    null,
-                    EnvironmentVariableTarget.Process);
+                if (key.Equals("PATH", StringComparison.OrdinalIgnoreCase))
+                {
+                    pathKey = key;
+                    break;
+                }
             }
 
-            StripSteamFromPath();
+            if (pathKey == null)
+                return;
 
+            string path = env[pathKey] ?? "";
+            string[] kept = path
+                .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(entry => !ValuePointsAtSteam(entry))
+                .ToArray();
+            env[pathKey] = string.Join(";", kept);
+        }
+
+        public static void RemoveSteamEnvironments()
+        {
             var overlay = new Thread(WatchOverlay);
             overlay.IsBackground = true;
             overlay.Name = "Steam overlay disarm";
             overlay.Start();
-
-            var gameManager = new Thread(WatchAllowedOverlays);
-            gameManager.IsBackground = true;
-            gameManager.Name = "Steam overlay allow";
-            gameManager.Start();
         }
 
         public static void DisarmOverlay()
@@ -89,27 +106,10 @@ namespace SalsaNOW
 
                 ResultLogged = true;
                 if (HooksRemoved > 0)
-                    SalsaLogger.Steam("Steam overlay will not attach to new processes, only whitelisted ones.");
+                    SalsaLogger.Steam("Steam overlay will not load into programs SalsaNOW starts. Steam, SalsaSteam, and their programs are left alone.");
                 else
                     SalsaLogger.Warn("Steam overlay is loaded, but its process hooks were not found.");
             }
-        }
-
-        private static void StripSteamFromPath()
-        {
-            string path = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Process);
-            if (string.IsNullOrEmpty(path))
-                return;
-
-            string[] kept = path
-                .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries)
-                .Where(entry => !ValuePointsAtSteam(entry))
-                .ToArray();
-
-            Environment.SetEnvironmentVariable(
-                "PATH",
-                string.Join(";", kept),
-                EnvironmentVariableTarget.Process);
         }
 
         private static readonly string[] OverlayProcesses = { "Game Manager", "PlayGTAV", "GTA5_Enhanced" };
@@ -170,22 +170,132 @@ namespace SalsaNOW
 
         private static void ForgetExitedOverlays()
         {
-            OverlayLoaded.RemoveWhere(pid =>
+            OverlayLoaded.RemoveWhere(PidHasExited);
+            HooksDisarmed.RemoveWhere(PidHasExited);
+        }
+
+        private static bool PidHasExited(uint pid)
+        {
+            try
             {
-                try
+                Process.GetProcessById((int)pid).Dispose();
+                return false;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static void StopOverlaySpread(string processName)
+        {
+            Process[] processes = Process.GetProcessesByName(processName);
+            try
+            {
+                foreach (Process process in processes)
                 {
-                    Process.GetProcessById((int)pid).Dispose();
-                    return false;
+                    uint pid;
+                    try
+                    {
+                        if (process.HasExited)
+                            continue;
+                        pid = (uint)process.Id;
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (HooksDisarmed.Contains(pid) || !ProcessHasOverlay(pid))
+                        continue;
+
+                    int removed = DisarmRemoteHooks(pid);
+                    if (removed < 0)
+                        continue;
+
+                    HooksDisarmed.Add(pid);
+                    if (removed > 0)
+                        SalsaLogger.Steam("Steam overlay in " + processName + " will not attach to new processes.");
                 }
-                catch
+            }
+            finally
+            {
+                foreach (Process process in processes)
+                    process.Dispose();
+            }
+        }
+
+        private static int DisarmRemoteHooks(uint pid)
+        {
+            if (IsSteamOrSalsaSteamProcess(pid))
+                return 0;
+
+            IntPtr process = OpenProcess(ProcessInjectAccess, false, pid);
+            if (process == IntPtr.Zero)
+                return -1;
+
+            try
+            {
+                ModuleSpan[] overlay = RemoteOverlaySpans(pid);
+                if (overlay.Length == 0)
+                    return -1;
+
+                var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+                int removed = 0;
+                foreach (ModuleEntry module in RemoteModules(pid))
                 {
-                    return true;
+                    if (!IsHookModule(module.Module))
+                        continue;
+
+                    byte[] file = ReadModuleFile(module.ExePath, files);
+                    if (file == null)
+                        continue;
+
+                    long moduleStart = module.BaseAddress.ToInt64();
+                    foreach (string procName in HookedProcs)
+                    {
+                        IntPtr proc = FindExportInRemoteModule(process, module.BaseAddress, procName);
+                        if (proc == IntPtr.Zero)
+                            continue;
+
+                        long procAddress = proc.ToInt64();
+                        if (procAddress < moduleStart)
+                            continue;
+
+                        uint rva = (uint)(procAddress - moduleStart);
+                        byte[] live = ReadRemote(process, procAddress, 32);
+                        byte[] original = ReadFileRange(file, rva, 32);
+                        if (live == null || original == null || live.Length < 16 || original.Length < 16)
+                            continue;
+                        if (live[0] == original[0] && live[1] == original[1])
+                            continue;
+                        if (!RemoteLeadsToOverlay(process, procAddress, overlay, 3, 0))
+                            continue;
+
+                        int length = HookLength(live);
+                        if (length > original.Length)
+                            continue;
+
+                        byte[] restore = new byte[length];
+                        Buffer.BlockCopy(original, 0, restore, 0, length);
+                        if (WriteRemote(process, procAddress, restore))
+                            removed++;
+                    }
                 }
-            });
+
+                return removed;
+            }
+            finally
+            {
+                CloseHandle(process);
+            }
         }
 
         private static bool LoadOverlay(uint pid)
         {
+            if (IsSteamOrSalsaSteamProcess(pid))
+                return false;
+
             IntPtr process = OpenProcess(ProcessInjectAccess, false, pid);
             if (process == IntPtr.Zero)
                 return false;
@@ -294,6 +404,115 @@ namespace SalsaNOW
             return null;
         }
 
+        private static bool IsHookModule(string name)
+        {
+            for (int i = 0; i < HookedModules.Length; i++)
+            {
+                if (name.Equals(HookedModules[i], StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static List<ModuleEntry> RemoteModules(uint pid)
+        {
+            var modules = new List<ModuleEntry>();
+            IntPtr snapshot = CreateToolhelp32Snapshot(0x18, pid);
+            if (snapshot == InvalidHandle)
+                return modules;
+
+            try
+            {
+                ModuleEntry entry = new ModuleEntry();
+                entry.Size = (uint)Marshal.SizeOf(typeof(ModuleEntry));
+                if (!Module32First(snapshot, ref entry))
+                    return modules;
+
+                do
+                {
+                    modules.Add(entry);
+                    entry.Size = (uint)Marshal.SizeOf(typeof(ModuleEntry));
+                }
+                while (Module32Next(snapshot, ref entry));
+            }
+            finally
+            {
+                CloseHandle(snapshot);
+            }
+
+            return modules;
+        }
+
+        private static ModuleSpan[] RemoteOverlaySpans(uint pid)
+        {
+            var spans = new List<ModuleSpan>();
+            foreach (ModuleEntry entry in RemoteModules(pid))
+            {
+                if (!entry.Module.Equals("GameOverlayRenderer64.dll", StringComparison.OrdinalIgnoreCase) &&
+                    !entry.Module.Equals("GameOverlayRenderer.dll", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                ulong start = (ulong)entry.BaseAddress.ToInt64();
+                spans.Add(new ModuleSpan
+                {
+                    Start = start,
+                    End = start + entry.BaseSize
+                });
+            }
+
+            return spans.ToArray();
+        }
+
+        private static bool RemoteLeadsToOverlay(IntPtr process, long address, ModuleSpan[] overlay, int depth, int guard)
+        {
+            if (address == 0 || guard > 8)
+                return false;
+            if (AddressInSpans((ulong)address, overlay))
+                return true;
+            if (depth < 0)
+                return false;
+
+            byte[] code = ReadRemote(process, address, 48);
+            if (code == null || code.Length < 8)
+                return false;
+
+            for (int i = 0; i + 8 <= code.Length; i++)
+            {
+                ulong candidate = (ulong)BitConverter.ToInt64(code, i);
+                if (AddressInSpans(candidate, overlay))
+                    return true;
+            }
+
+            for (int i = 0; i + 5 <= code.Length; i++)
+            {
+                if (code[i] == 0xE8 || code[i] == 0xE9)
+                {
+                    int relative = BitConverter.ToInt32(code, i + 1);
+                    long destination = address + i + 5 + relative;
+                    if (RemoteLeadsToOverlay(process, destination, overlay, depth - 1, guard + 1))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool WriteRemote(IntPtr process, long address, byte[] data)
+        {
+            uint oldProtect;
+            IntPtr target = new IntPtr(address);
+            if (!VirtualProtectEx(process, target, (UIntPtr)data.Length, PageExecuteReadWrite, out oldProtect))
+                return false;
+
+            IntPtr written;
+            bool wrote = WriteProcessMemory(process, target, data, data.Length, out written);
+            FlushInstructionCache(process, target, (UIntPtr)data.Length);
+            uint restored;
+            VirtualProtectEx(process, target, (UIntPtr)data.Length, oldProtect, out restored);
+            return wrote && written.ToInt64() >= data.Length;
+        }
+
         private static IntPtr FindRemoteLoadLibrary(IntPtr process, uint pid)
         {
             IntPtr kernel32 = IntPtr.Zero;
@@ -327,7 +546,12 @@ namespace SalsaNOW
             if (kernel32 == IntPtr.Zero)
                 return IntPtr.Zero;
 
-            byte[] dos = ReadRemote(process, kernel32.ToInt64(), 64);
+            return FindExportInRemoteModule(process, kernel32, "LoadLibraryW");
+        }
+
+        private static IntPtr FindExportInRemoteModule(IntPtr process, IntPtr moduleBase, string exportName)
+        {
+            byte[] dos = ReadRemote(process, moduleBase.ToInt64(), 64);
             if (dos == null || BitConverter.ToUInt16(dos, 0) != 0x5A4D)
                 return IntPtr.Zero;
 
@@ -335,7 +559,7 @@ namespace SalsaNOW
             if (peOffset <= 0 || peOffset > 4096)
                 return IntPtr.Zero;
 
-            byte[] pe = ReadRemote(process, kernel32.ToInt64() + peOffset, 248);
+            byte[] pe = ReadRemote(process, moduleBase.ToInt64() + peOffset, 248);
             if (pe == null || BitConverter.ToUInt32(pe, 0) != 0x00004550)
                 return IntPtr.Zero;
 
@@ -348,7 +572,7 @@ namespace SalsaNOW
             if (exportRva == 0)
                 return IntPtr.Zero;
 
-            byte[] directory = ReadRemote(process, kernel32.ToInt64() + exportRva, 40);
+            byte[] directory = ReadRemote(process, moduleBase.ToInt64() + exportRva, 40);
             if (directory == null)
                 return IntPtr.Zero;
 
@@ -360,17 +584,17 @@ namespace SalsaNOW
             if (nameCount == 0 || nameCount > 8192 || functionCount == 0 || functionCount > 8192)
                 return IntPtr.Zero;
 
-            byte[] names = ReadRemote(process, kernel32.ToInt64() + nameRva, (int)nameCount * 4);
-            byte[] ordinals = ReadRemote(process, kernel32.ToInt64() + ordinalRva, (int)nameCount * 2);
-            byte[] functions = ReadRemote(process, kernel32.ToInt64() + functionRva, (int)functionCount * 4);
+            byte[] names = ReadRemote(process, moduleBase.ToInt64() + nameRva, (int)nameCount * 4);
+            byte[] ordinals = ReadRemote(process, moduleBase.ToInt64() + ordinalRva, (int)nameCount * 2);
+            byte[] functions = ReadRemote(process, moduleBase.ToInt64() + functionRva, (int)functionCount * 4);
             if (names == null || ordinals == null || functions == null)
                 return IntPtr.Zero;
 
             for (int i = 0; i < nameCount; i++)
             {
                 uint nameEntry = BitConverter.ToUInt32(names, i * 4);
-                string name = ReadRemoteAnsi(process, kernel32.ToInt64() + nameEntry, 32);
-                if (!string.Equals(name, "LoadLibraryW", StringComparison.Ordinal))
+                string name = ReadRemoteAnsi(process, moduleBase.ToInt64() + nameEntry, 64);
+                if (!string.Equals(name, exportName, StringComparison.Ordinal))
                     continue;
 
                 ushort ordinal = BitConverter.ToUInt16(ordinals, i * 2);
@@ -378,7 +602,7 @@ namespace SalsaNOW
                     return IntPtr.Zero;
 
                 uint function = BitConverter.ToUInt32(functions, ordinal * 4);
-                return new IntPtr(kernel32.ToInt64() + function);
+                return new IntPtr(moduleBase.ToInt64() + function);
             }
 
             return IntPtr.Zero;
@@ -589,8 +813,14 @@ namespace SalsaNOW
             var path = new StringBuilder(1024);
             if (GetModuleFileName(module, path, path.Capacity) == 0)
                 return null;
+            return ReadModuleFile(path.ToString(), files);
+        }
 
-            string filePath = path.ToString();
+        private static byte[] ReadModuleFile(string filePath, Dictionary<string, byte[]> files)
+        {
+            if (string.IsNullOrEmpty(filePath))
+                return null;
+
             byte[] file;
             if (files.TryGetValue(filePath, out file))
                 return file;
@@ -964,6 +1194,7 @@ namespace SalsaNOW
 
         private static readonly object DisarmGate = new object();
         private static readonly HashSet<uint> OverlayLoaded = new HashSet<uint>();
+        private static readonly HashSet<uint> HooksDisarmed = new HashSet<uint>();
         private static int HooksRemoved;
         private static bool SawOverlay;
         private static bool ResultLogged;
@@ -1020,6 +1251,9 @@ namespace SalsaNOW
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr hObject);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool VirtualProtectEx(IntPtr hProcess, IntPtr lpAddress, UIntPtr dwSize, uint flNewProtect, out uint lpflOldProtect);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool VirtualProtect(IntPtr address, UIntPtr size, uint newProtect, out uint oldProtect);
@@ -1134,6 +1368,43 @@ namespace SalsaNOW
         {
             public ulong Start;
             public ulong End;
+        }
+
+        private static bool IsSteamOrSalsaSteamProcess(uint pid)
+        {
+            try
+            {
+                using (Process process = Process.GetProcessById((int)pid))
+                {
+                    string name = process.ProcessName ?? "";
+                    if (name.Equals("steam", StringComparison.OrdinalIgnoreCase) ||
+                        name.Equals("steamwebhelper", StringComparison.OrdinalIgnoreCase) ||
+                        name.Equals("steamservice", StringComparison.OrdinalIgnoreCase) ||
+                        name.Equals("steamerrorreporter", StringComparison.OrdinalIgnoreCase) ||
+                        name.Equals("steamerrorreporter64", StringComparison.OrdinalIgnoreCase) ||
+                        name.StartsWith("SalsaSteam", StringComparison.OrdinalIgnoreCase))
+                        return true;
+
+                    try
+                    {
+                        string path = process.MainModule != null ? process.MainModule.FileName : "";
+                        if (path.IndexOf("\\SalsaSteam\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            path.IndexOf("SalsaSteamStartup", StringComparison.OrdinalIgnoreCase) >= 0)
+                            return true;
+                        if (path.EndsWith("\\steam.exe", StringComparison.OrdinalIgnoreCase) &&
+                            path.IndexOf("\\steamapps\\", StringComparison.OrdinalIgnoreCase) < 0)
+                            return true;
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
         }
 
         private static bool IsSteamVariable(string name)

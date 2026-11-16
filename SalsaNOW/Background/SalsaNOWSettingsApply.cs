@@ -469,7 +469,7 @@ namespace SalsaNOW
             try
             {
                 StopTranslucentTb();
-                Process.Start(new ProcessStartInfo
+                SteamDetach.StartClean(new ProcessStartInfo
                 {
                     FileName = TranslucentTbExe,
                     WorkingDirectory = TranslucentTbFolder,
@@ -723,7 +723,7 @@ namespace SalsaNOW
         {
             try
             {
-                Process.Start(new ProcessStartInfo
+                SteamDetach.StartClean(new ProcessStartInfo
                 {
                     FileName = browserPath,
                     Arguments = "\"" + targetUrl + "\"",
@@ -1028,7 +1028,7 @@ namespace SalsaNOW
                     lines[i] = associations[i].Key + ", " + associations[i].Value;
 
                 File.WriteAllLines(configFile, lines);
-                using (var process = Process.Start(new ProcessStartInfo
+                using (var process = SteamDetach.StartClean(new ProcessStartInfo
                 {
                     FileName = setUserFta,
                     Arguments = "\"" + configFile + "\"",
@@ -1064,7 +1064,7 @@ namespace SalsaNOW
         {
             try
             {
-                using (var process = Process.Start(new ProcessStartInfo
+                using (var process = SteamDetach.StartClean(new ProcessStartInfo
                 {
                     FileName = setUserFta,
                     Arguments = extension + " " + progId,

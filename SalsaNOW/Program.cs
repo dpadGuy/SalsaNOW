@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Net;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
@@ -10,6 +11,18 @@ namespace SalsaNOW
 {
     internal class Program
     {
+        private static string CurrentVersion()
+        {
+            var info = (AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
+                typeof(Program).Assembly,
+                typeof(AssemblyInformationalVersionAttribute));
+            if (info != null && info.InformationalVersion.Length > 0)
+                return info.InformationalVersion;
+
+            Version version = typeof(Program).Assembly.GetName().Version;
+            return version.ToString(3);
+        }
+
         private static string globalDirectory = "";
         private static string currentPath = Directory.GetCurrentDirectory();
         private static readonly CancellationTokenSource cts = new CancellationTokenSource();
@@ -20,9 +33,11 @@ namespace SalsaNOW
         {
             // Clean steam environment before everything.
             // WE LEAVE THIS MANDATORY HERE DON'T MOVE OR DELETE.
+            // WARNING: This must not change the environment Steam or SalsaSteam inherit. Do not modify
+            // their environment, or the environment of programs they start, unless it is really, really needed.
             SteamDetach.RemoveSteamEnvironments();
 
-            string salsaNowTitle = "SalsaNOW V1.6.9.4 - by dpadGuy";
+            string salsaNowTitle = "SalsaNOW V" + CurrentVersion() + " - by dpadGuy";
 
             Console.Title = salsaNowTitle;
 

@@ -26,8 +26,19 @@
     <UpdatePeriodically>false</UpdatePeriodically>
     <UpdateRequired>false</UpdateRequired>
     <MapFileExtensions>true</MapFileExtensions>
-    <ApplicationRevision>3</ApplicationRevision>
-    <ApplicationVersion>1.6.9.4</ApplicationVersion>
+    <ApplicationRevision>0</ApplicationRevision>
+    <SalsaDate>$([System.DateTime]::Now.ToString("yy.MM.dd"))</SalsaDate>
+    <RevisionFile>$(MSBuildProjectDirectory)\BuildRevision.txt</RevisionFile>
+    <LastBuild Condition="Exists('$(RevisionFile)')">$([System.IO.File]::ReadAllText('$(RevisionFile)').Trim())</LastBuild>
+    <LastBuild Condition="'$(LastBuild)' == ''">none</LastBuild>
+    <SameDay>$([System.String]::Copy('$(LastBuild)').StartsWith('$(SalsaDate)'))</SameDay>
+    <PrevRev Condition="'$(LastBuild)' == '$(SalsaDate)'">0</PrevRev>
+    <PrevRev Condition="'$(SameDay)' == 'True' and '$(LastBuild)' != '$(SalsaDate)'">$(LastBuild.Substring(9))</PrevRev>
+    <NextRev Condition="'$(PrevRev)' != ''">$([MSBuild]::Add($(PrevRev), 1))</NextRev>
+    <NextRev Condition="'$(NextRev)' == ''">0</NextRev>
+    <SalsaVersion Condition="'$(NextRev)' == '0'">$(SalsaDate)</SalsaVersion>
+    <SalsaVersion Condition="'$(NextRev)' != '0'">$(SalsaDate).$(NextRev)</SalsaVersion>
+    <ApplicationVersion>$(SalsaDate).$(NextRev)</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <PublishWizardCompleted>true</PublishWizardCompleted>
     <BootstrapperEnabled>true</BootstrapperEnabled>
@@ -162,4 +173,20 @@
     <Error Condition="!Exists('..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets'))" />
   </Target>
   <Import Project="..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets" Condition="Exists('..\packages\Costura.Fody.6.2.0\build\Costura.Fody.targets')" />
+  <Target Name="StampSalsaVersion" BeforeTargets="CoreCompile" Condition="'$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <_SalsaStamp>$(IntermediateOutputPath)SalsaVersion.cs</_SalsaStamp>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <ItemGroup>
+      <_StampLine Include="[assembly: System.Reflection.AssemblyVersion(&quot;$(ApplicationVersion)&quot;)]" />
+      <_StampLine Include="[assembly: System.Reflection.AssemblyFileVersion(&quot;$(ApplicationVersion)&quot;)]" />
+      <_StampLine Include="[assembly: System.Reflection.AssemblyInformationalVersion(&quot;$(SalsaVersion)&quot;)]" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_SalsaStamp)" Lines="@(_StampLine)" Overwrite="true" />
+    <WriteLinesToFile File="$(RevisionFile)" Lines="$(SalsaVersion)" Overwrite="true" />
+    <ItemGroup>
+      <Compile Include="$(_SalsaStamp)" />
+    </ItemGroup>
+  </Target>
 </Project>

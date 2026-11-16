@@ -49,15 +49,16 @@ namespace SalsaNOW
 
                 // Starting custom server interaction with steam
 
-                Process.Start(new ProcessStartInfo
+                SteamDetach.StartClean(new ProcessStartInfo
                 {
                     FileName = customServer,
-                    Arguments = customServerConfig,
-                    UseShellExecute = true
+                    Arguments = customServerConfig
                 });
 
                 // Steam USG Bypass Part (Temporary until patch discovered)
 
+                // WARNING: Steam must inherit the environment. Do not give this process a cleaned environment
+                // unless it is really, really needed. Games it starts inherit whatever this process has.
                 Process usg = null;
 
                 if (SalsaSettings.SteamSilentLaunch)
@@ -82,7 +83,7 @@ namespace SalsaNOW
 
                 // Start Startup Batch file if user has it available
                 string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
-                if (File.Exists(batch)) Process.Start(new ProcessStartInfo { FileName = batch, UseShellExecute = true });
+                if (File.Exists(batch)) SteamDetach.StartClean(new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c \"" + batch + "\"" });
 
                 // conhost.exe (bleh.exe) is kept after it exits; it is downloaded fresh over it every launch.
 
@@ -100,7 +101,7 @@ namespace SalsaNOW
             if (Directory.Exists(steamUiNv))
                 return;
 
-            using (Process copy = Process.Start(new ProcessStartInfo
+            using (Process copy = SteamDetach.StartClean(new ProcessStartInfo
             {
                 FileName = "robocopy.exe",
                 Arguments = "\"" + steamUi + "\" \"" + steamUiOg + "\" /E /COPY:DAT /R:0 /W:0 /MT:16 /NFL /NDL /NJH /NJS /NC /NS",

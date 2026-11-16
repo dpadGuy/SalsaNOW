@@ -161,7 +161,7 @@ namespace SalsaNOW
 
         private static void StartDesktopProcess(string exePath, string workingDirectory)
         {
-            Process.Start(new ProcessStartInfo
+            SteamDetach.StartClean(new ProcessStartInfo
             {
                 FileName = exePath,
                 WorkingDirectory = workingDirectory,

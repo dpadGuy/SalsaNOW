@@ -143,7 +143,7 @@ namespace SalsaNOW
         {
             try
             {
-                using (Process process = Process.Start(new ProcessStartInfo
+                using (Process process = SteamDetach.StartClean(new ProcessStartInfo
                 {
                     FileName = "reg.exe",
                     Arguments = "add \"HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32\" /f /ve",
@@ -298,7 +298,7 @@ namespace SalsaNOW
             {
                 try
                 {
-                    Process import = Process.Start(new ProcessStartInfo
+                    Process import = SteamDetach.StartClean(new ProcessStartInfo
                     {
                         FileName = startMenu,
                         Arguments = "-xml \"" + menuXml + "\"",
@@ -320,9 +320,9 @@ namespace SalsaNOW
             var start = new ProcessStartInfo
             {
                 FileName = startMenu,
-                WorkingDirectory = openShellDir,
-                UseShellExecute = true
+                WorkingDirectory = openShellDir
             };
+            SteamDetach.ApplyCleanEnvironment(start);
 
             bool retry = false;
             while (!IsOpenShellRunning())

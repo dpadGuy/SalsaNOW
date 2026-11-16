@@ -100,7 +100,7 @@ namespace SalsaNOW
                 string batch = Path.Combine(globalDirectory, "StartupBatch.bat");
                 if (File.Exists(batch))
                 {
-                    try { Process.Start(new ProcessStartInfo { FileName = batch, UseShellExecute = true }); }
+                    try { SteamDetach.StartClean(new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c \"" + batch + "\"" }); }
                     catch (Exception ex) { SalsaLogger.Error("StartupBatch.bat failed to start: " + ex.Message); }
                 }
             }
@@ -240,6 +240,8 @@ namespace SalsaNOW
 
         // CREATE_NEW_CONSOLE gives SalsaSteamStartup its own window. Handles are not inherited, so its output
         // never arrives on SalsaNOW's console and nothing here reads it.
+        // WARNING: lpEnvironment must stay null. SalsaSteam and every program it starts must inherit
+        // SalsaNOW's environment unchanged. Do not pass a custom environment unless it is really, really needed.
         private static void StartInNewConsole(string exe, string workingDirectory)
         {
             var startup = new STARTUPINFO();

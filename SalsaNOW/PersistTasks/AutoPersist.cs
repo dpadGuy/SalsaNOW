@@ -44,7 +44,7 @@ namespace SalsaNOW
                     {
                         SalsaLogger.Info("Restoring registry: " + entry.Key);
 
-                        using (Process process = Process.Start(new ProcessStartInfo
+                        using (Process process = SteamDetach.StartClean(new ProcessStartInfo
                         {
                             FileName = "reg.exe",
                             Arguments = $"import \"{file}\"",
@@ -75,7 +75,7 @@ namespace SalsaNOW
                             {
                                 string file = Path.Combine(backupDir, entry.File);
 
-                                using (Process process = Process.Start(new ProcessStartInfo
+                                using (Process process = SteamDetach.StartClean(new ProcessStartInfo
                                 {
                                     FileName = "reg.exe",
                                     Arguments = $"export \"{entry.Key}\" \"{file}\" /y",
@@ -139,7 +139,7 @@ namespace SalsaNOW
                         entry.Url,
                         regFile);
 
-                    using (Process process = Process.Start(
+                    using (Process process = SteamDetach.StartClean(
                         new ProcessStartInfo
                         {
                             FileName = "reg.exe",
@@ -266,7 +266,7 @@ namespace SalsaNOW
 
         private static void RunHiddenCmd(string args)
         {
-            Process.Start(new ProcessStartInfo("cmd.exe", args)
+            SteamDetach.StartClean(new ProcessStartInfo("cmd.exe", args)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true

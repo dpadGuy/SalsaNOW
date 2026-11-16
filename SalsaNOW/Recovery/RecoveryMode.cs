@@ -129,7 +129,7 @@ namespace SalsaNOW
 
             Console.Clear();
 
-            Process.Start("cmd.exe", $"/c start \"\" \"{Process.GetCurrentProcess().MainModule.FileName}\"");
+            SteamDetach.StartClean(new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c start \"\" \"" + Process.GetCurrentProcess().MainModule.FileName + "\"" });
             Environment.Exit(0);
         }
 
@@ -197,7 +197,7 @@ namespace SalsaNOW
 
                 Console.Clear();
 
-                Process.Start("cmd.exe", $"/c start \"\" \"{Process.GetCurrentProcess().MainModule.FileName}\"");
+                SteamDetach.StartClean(new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c start \"\" \"" + Process.GetCurrentProcess().MainModule.FileName + "\"" });
                 Environment.Exit(0);
             }
             catch (Exception ex)
@@ -273,7 +273,7 @@ namespace SalsaNOW
                         destination);
                 }
 
-                Process.Start(destination);
+                SteamDetach.StartClean(new ProcessStartInfo { FileName = destination });
 
                 SalsaLogger.Info("Explorer++ downloaded successfully.");
             }
@@ -311,7 +311,7 @@ namespace SalsaNOW
 
                 File.Delete(zipPath);
 
-                Process.Start(systemInformerExePath);
+                SteamDetach.StartClean(new ProcessStartInfo { FileName = systemInformerExePath });
             }
             catch (Exception ex)
             {

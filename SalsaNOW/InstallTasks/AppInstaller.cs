@@ -66,7 +66,7 @@ namespace SalsaNOW
                             SalsaLogger.Info("Downloading " + app.name);
                             await DownloadAndSwapAsync(webClient, app.name, app.url, appExePath);
                             EnsureDesktopShortcut(app.name, globalDirectory, desktopPath, appExePath, globalDirectory);
-                            if (app.run == "true") Process.Start(appExePath);
+                            if (app.run == "true") SteamDetach.StartClean(new ProcessStartInfo { FileName = appExePath });
                             return;
                         }
 
@@ -95,13 +95,13 @@ namespace SalsaNOW
 
                             WriteVersionMarker(versionMarkerFile, versionKey);
                             EnsureDesktopShortcut(app.name, globalDirectory, desktopPath, appZipExe, Path.GetDirectoryName(appZipExe));
-                            if (app.run == "true") Process.Start(appZipExe);
+                            if (app.run == "true") SteamDetach.StartClean(new ProcessStartInfo { FileName = appZipExe });
                         }
                         else
                         {
                             SalsaLogger.Info($"{app.name} already exists. Skipping download and respecting user desktop layout.");
                             EnsureDesktopShortcut(app.name, globalDirectory, desktopPath, appZipExe, Path.GetDirectoryName(appZipExe));
-                            if (app.run == "true") Process.Start(appZipExe);
+                            if (app.run == "true") SteamDetach.StartClean(new ProcessStartInfo { FileName = appZipExe });
                         }
                     }
                     }
@@ -261,7 +261,7 @@ namespace SalsaNOW
                             System.IO.File.Delete(zip);
                             WriteVersionMarker(versionMarkerFile, versionKey);
 
-                            if (app.run == "true") Process.Start(appZipPath);
+                            if (app.run == "true") SteamDetach.StartClean(new ProcessStartInfo { FileName = appZipPath });
                         }
                         else
                         {
@@ -328,18 +328,11 @@ namespace SalsaNOW
             if (!System.IO.File.Exists(path))
                 return;
 
-            if (useShellExecute)
-            {
-                Process.Start(path);
-                return;
-            }
-
-            Process.Start(new ProcessStartInfo
+            SteamDetach.StartClean(new ProcessStartInfo
             {
                 FileName = path,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
+                CreateNoWindow = !useShellExecute,
+                WindowStyle = useShellExecute ? ProcessWindowStyle.Normal : ProcessWindowStyle.Hidden
             });
         }
 
