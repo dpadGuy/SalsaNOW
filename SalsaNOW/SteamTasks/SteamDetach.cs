@@ -68,6 +68,12 @@ namespace SalsaNOW
             overlay.IsBackground = true;
             overlay.Name = "Steam overlay disarm";
             overlay.Start();
+
+            // Disarming SalsaNOW stops the overlay from following every child. These exes still need it.
+            var allow = new Thread(WatchAllowedOverlays);
+            allow.IsBackground = true;
+            allow.Name = "Steam overlay whitelist";
+            allow.Start();
         }
 
         public static void DisarmOverlay()
@@ -106,13 +112,21 @@ namespace SalsaNOW
 
                 ResultLogged = true;
                 if (HooksRemoved > 0)
-                    SalsaLogger.Steam("Steam overlay will not load into programs SalsaNOW starts. Steam, SalsaSteam, and their programs are left alone.");
+                    SalsaLogger.Steam("Steam overlay will not load into programs SalsaNOW starts. Whitelist: " + string.Join(", ", OverlayWhitelist) + ".");
                 else
-                    SalsaLogger.Warn("Steam overlay is loaded, but its process hooks were not found.");
+                    SalsaLogger.Warn("Steam overlay is loaded, but its process hooks were not found. Whitelist: " + string.Join(", ", OverlayWhitelist) + ".");
             }
         }
 
-        private static readonly string[] OverlayProcesses = { "Game Manager", "PlayGTAV", "GTA5_Enhanced" };
+        // Only these exes may have GameOverlayRenderer loaded by SalsaNOW.
+        // Process names omit ".exe"; matching also checks the real file name.
+        private static readonly string[] OverlayWhitelist =
+        {
+            "Game Manager.exe",
+            "PlayGTAV.exe",
+            "GTA5.exe",
+            "GTA5_Enhanced.exe"
+        };
 
         private static void WatchAllowedOverlays()
         {
@@ -120,21 +134,38 @@ namespace SalsaNOW
             {
                 try
                 {
-                    foreach (string processName in OverlayProcesses)
-                        LoadOverlayInto(processName);
+                    for (int i = 0; i < OverlayWhitelist.Length; i++)
+                        LoadOverlayInto(OverlayWhitelist[i]);
                     ForgetExitedOverlays();
                 }
                 catch (Exception ex)
                 {
-                    SalsaLogger.Error("Steam overlay allow check failed: " + ex.Message);
+                    SalsaLogger.Error("Steam overlay whitelist check failed: " + ex.Message);
                 }
 
                 Thread.Sleep(500);
             }
         }
 
-        private static void LoadOverlayInto(string processName)
+        private static bool IsOverlayWhitelisted(Process process, string exeName)
         {
+            try
+            {
+                string path = process.MainModule != null ? process.MainModule.FileName : null;
+                if (!string.IsNullOrEmpty(path))
+                    return Path.GetFileName(path).Equals(exeName, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+            }
+
+            string name = process.ProcessName ?? "";
+            return name.Equals(Path.GetFileNameWithoutExtension(exeName), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void LoadOverlayInto(string exeName)
+        {
+            string processName = Path.GetFileNameWithoutExtension(exeName);
             Process[] processes = Process.GetProcessesByName(processName);
             try
             {
@@ -143,7 +174,7 @@ namespace SalsaNOW
                     uint pid;
                     try
                     {
-                        if (process.HasExited)
+                        if (process.HasExited || !IsOverlayWhitelisted(process, exeName))
                             continue;
                         pid = (uint)process.Id;
                     }
@@ -157,7 +188,11 @@ namespace SalsaNOW
                     if (LoadOverlay(pid))
                     {
                         OverlayLoaded.Add(pid);
-                        SalsaLogger.Steam("Loaded the Steam overlay into " + processName + ".");
+                        SalsaLogger.Steam("Loaded the Steam overlay into " + exeName + ".");
+                    }
+                    else if (OverlayLoadFailed.Add(pid))
+                    {
+                        SalsaLogger.Warn("Could not load the Steam overlay into " + exeName + ".");
                     }
                 }
             }
@@ -171,6 +206,7 @@ namespace SalsaNOW
         private static void ForgetExitedOverlays()
         {
             OverlayLoaded.RemoveWhere(PidHasExited);
+            OverlayLoadFailed.RemoveWhere(PidHasExited);
             HooksDisarmed.RemoveWhere(PidHasExited);
         }
 
@@ -337,9 +373,11 @@ namespace SalsaNOW
                     {
                         WaitForSingleObject(thread, 8000);
                         uint exitCode;
-                        if (!GetExitCodeThread(thread, out exitCode) || exitCode == 0)
-                            return false;
-                        return true;
+                        if (GetExitCodeThread(thread, out exitCode) && exitCode != 0)
+                            return true;
+                        // LoadLibrary's module base is 64-bit. The thread exit code is only the low half,
+                        // so a successful load can look like 0. The module list is the real check.
+                        return ProcessHasOverlay(pid);
                     }
                     finally
                     {
@@ -1194,6 +1232,7 @@ namespace SalsaNOW
 
         private static readonly object DisarmGate = new object();
         private static readonly HashSet<uint> OverlayLoaded = new HashSet<uint>();
+        private static readonly HashSet<uint> OverlayLoadFailed = new HashSet<uint>();
         private static readonly HashSet<uint> HooksDisarmed = new HashSet<uint>();
         private static int HooksRemoved;
         private static bool SawOverlay;
