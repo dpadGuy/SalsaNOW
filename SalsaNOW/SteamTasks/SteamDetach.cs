@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Newtonsoft.Json.Linq;
 
 namespace SalsaNOW
 {
@@ -111,16 +113,17 @@ namespace SalsaNOW
                     return;
 
                 ResultLogged = true;
+                string whitelist = DescribeWhitelist();
                 if (HooksRemoved > 0)
-                    SalsaLogger.Steam("Steam overlay will not load into programs SalsaNOW starts. Whitelist: " + string.Join(", ", OverlayWhitelist) + ".");
+                    SalsaLogger.Steam("Steam overlay will not load into programs SalsaNOW starts. Whitelist: " + whitelist + ".");
                 else
-                    SalsaLogger.Warn("Steam overlay is loaded, but its process hooks were not found. Whitelist: " + string.Join(", ", OverlayWhitelist) + ".");
+                    SalsaLogger.Warn("Steam overlay is loaded, but its process hooks were not found. Whitelist: " + whitelist + ".");
             }
         }
 
-        // Only these exes may have GameOverlayRenderer loaded by SalsaNOW.
-        // Process names omit ".exe"; matching also checks the real file name.
-        private static readonly string[] OverlayWhitelist =
+        // Used until the remote list is read. An empty or broken file keeps this list.
+        // A JSON list, including [], replaces it.
+        private static readonly string[] DefaultOverlayWhitelist =
         {
             "Game Manager.exe",
             "PlayGTAV.exe",
@@ -128,14 +131,24 @@ namespace SalsaNOW
             "GTA5_Enhanced.exe"
         };
 
+        private const string OverlayWhitelistUrl = "https://salsanowfiles.work/jsons/SteamOverlayWhitelist.txt";
+        private static readonly object WhitelistGate = new object();
+        private static string[] OverlayWhitelist = DefaultOverlayWhitelist;
+        private static string WhitelistSignature = string.Join("\n", DefaultOverlayWhitelist);
+        private static DateTime WhitelistFetchedUtc = DateTime.MinValue;
+        private static bool WhitelistFallbackLogged;
+        private static readonly TimeSpan WhitelistRefreshInterval = TimeSpan.FromSeconds(30);
+
         private static void WatchAllowedOverlays()
         {
             while (true)
             {
                 try
                 {
-                    for (int i = 0; i < OverlayWhitelist.Length; i++)
-                        LoadOverlayInto(OverlayWhitelist[i]);
+                    RefreshOverlayWhitelist();
+                    string[] names = SnapshotWhitelist();
+                    for (int i = 0; i < names.Length; i++)
+                        LoadOverlayInto(names[i]);
                     ForgetExitedOverlays();
                 }
                 catch (Exception ex)
@@ -145,6 +158,147 @@ namespace SalsaNOW
 
                 Thread.Sleep(500);
             }
+        }
+
+        private static string[] SnapshotWhitelist()
+        {
+            lock (WhitelistGate)
+                return OverlayWhitelist;
+        }
+
+        private static string DescribeWhitelist()
+        {
+            string[] names = SnapshotWhitelist();
+            return names.Length == 0 ? "none" : string.Join(", ", names);
+        }
+
+        private static void RefreshOverlayWhitelist()
+        {
+            if (WhitelistFetchedUtc != DateTime.MinValue &&
+                DateTime.UtcNow - WhitelistFetchedUtc < WhitelistRefreshInterval)
+                return;
+
+            WhitelistFetchedUtc = DateTime.UtcNow;
+            try
+            {
+                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12 | SecurityProtocolType.Tls13;
+                string json;
+                using (var client = new WebClient())
+                {
+                    client.Headers.Add("Cache-Control", "no-cache");
+                    client.Headers.Add("Pragma", "no-cache");
+                    json = client.DownloadString(OverlayWhitelistUrl + "?nocache=" + DateTime.UtcNow.Ticks);
+                }
+
+                string[] parsed = ParseOverlayWhitelist(json);
+                if (parsed == null)
+                {
+                    if (!WhitelistFallbackLogged)
+                    {
+                        WhitelistFallbackLogged = true;
+                        SalsaLogger.Warn("Steam overlay whitelist was empty or not a list. Keeping " + DescribeWhitelist() + ".");
+                    }
+                    return;
+                }
+
+                WhitelistFallbackLogged = false;
+                ApplyOverlayWhitelist(parsed);
+            }
+            catch (Exception ex)
+            {
+                if (!WhitelistFallbackLogged)
+                {
+                    WhitelistFallbackLogged = true;
+                    SalsaLogger.Warn("Steam overlay whitelist could not be read. Keeping " + DescribeWhitelist() + ". " + ex.Message);
+                }
+            }
+        }
+
+        private static void ApplyOverlayWhitelist(string[] parsed)
+        {
+            string signature = string.Join("\n", parsed);
+            bool announce;
+            lock (WhitelistGate)
+            {
+                if (string.Equals(signature, WhitelistSignature, StringComparison.OrdinalIgnoreCase))
+                    return;
+                OverlayWhitelist = parsed;
+                WhitelistSignature = signature;
+                // The startup line already prints this list. Only a later change gets its own line.
+                announce = ResultLogged;
+            }
+
+            if (announce)
+                SalsaLogger.Steam("Steam overlay whitelist: " + (parsed.Length == 0 ? "none" : string.Join(", ", parsed)) + ".");
+        }
+
+        // Null means "keep the list we already have". An array, including an empty one, is the new list.
+        // JSON array of exe names, or { "exes": [ ... ] }. A plain text file is one exe name per line.
+        private static string[] ParseOverlayWhitelist(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+
+            string trimmed = text.Trim();
+            if (trimmed.StartsWith("[") || trimmed.StartsWith("{"))
+                return ParseOverlayWhitelistJson(trimmed);
+
+            var names = new List<string>();
+            string[] lines = trimmed.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (line.Length == 0 || line.StartsWith("#") || line.StartsWith("//"))
+                    continue;
+                AddWhitelistName(names, line);
+            }
+
+            return names.ToArray();
+        }
+
+        private static string[] ParseOverlayWhitelistJson(string json)
+        {
+            JToken token = JToken.Parse(json);
+            JArray array = token as JArray;
+            if (array == null && token.Type == JTokenType.Object)
+            {
+                JObject obj = (JObject)token;
+                array = (obj["exes"] ?? obj["apps"] ?? obj["whitelist"]) as JArray;
+            }
+            if (array == null)
+                return null;
+
+            var names = new List<string>();
+            foreach (JToken item in array)
+            {
+                string name = null;
+                if (item.Type == JTokenType.String)
+                    name = (string)item;
+                else if (item.Type == JTokenType.Object)
+                    name = (string)(item["exe"] ?? item["exeName"] ?? item["name"]);
+                AddWhitelistName(names, name);
+            }
+
+            return names.ToArray();
+        }
+
+        private static void AddWhitelistName(List<string> names, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+
+            name = Path.GetFileName(name.Trim().Trim('"'));
+            if (name.Length == 0)
+                return;
+            if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                name += ".exe";
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (names[i].Equals(name, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+
+            names.Add(name);
         }
 
         private static bool IsOverlayWhitelisted(Process process, string exeName)
