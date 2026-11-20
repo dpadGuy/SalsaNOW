@@ -97,7 +97,7 @@ namespace SalsaNOW
             // Clear the prompt line before continuing
             Console.Write("\r" + new string(' ', Console.BufferWidth - 1) + "\r");
 
-            // One SalsaNOW per session. A second one would re-download conhost.exe, server.exe and
+            // One SalsaNOW per session. A second one would re-download UsgMethod.exe, steamui.zip and
             // SalsaSteamStartup.exe while the first one's copies are running, and start Steam a second time.
             // Checked after the recovery prompt so recovery mode stays reachable while SalsaNOW runs.
             if (!TryAcquireSingleInstance())
@@ -145,7 +145,7 @@ namespace SalsaNOW
         // SalsaSteamStartup.exe is installed and its desktop shortcut is made on every launch.
         // salsaSteam off (default): points Steam registry entries back at the original Steam if they still name
         // SalsaSteam, leaves SalsaSteam games where they are, then starts normal Steam the usual way
-        // (conhost.exe / bleh.exe, modified server, steamui swap). SalsaSteamStartup is not started.
+        // (UsgMethod.exe, steamui.zip). SalsaSteamStartup is not started.
         // salsaSteam on: none of that. SalsaSteam's games and registry are left alone and SalsaSteamLauncher
         // starts SalsaSteamStartup.exe, which launches 64-bit SalsaSteam.
         static async Task StartSteamAsync(string globalDirectory)
